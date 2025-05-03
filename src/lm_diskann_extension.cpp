@@ -1,6 +1,6 @@
 #define DUCKDB_EXTENSION_MAIN
 
-#include "vss_extension.hpp"
+#include "lm_diskann_extension.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -17,11 +17,11 @@ static void LoadInternal(DatabaseInstance &instance) {
 	HNSWModule::Register(instance);
 }
 
-void VssExtension::Load(DuckDB &db) {
+void LmDiskannExtension::Load(DuckDB &db) {
 	LoadInternal(*db.instance);
 }
 
-std::string VssExtension::Name() {
+std::string LmDiskannExtension::Name() {
 	return "vss";
 }
 
@@ -31,7 +31,7 @@ extern "C" {
 
 DUCKDB_EXTENSION_API void vss_init(duckdb::DatabaseInstance &db) {
 	duckdb::DuckDB db_wrapper(db);
-	db_wrapper.LoadExtension<duckdb::VssExtension>();
+	db_wrapper.LoadExtension<duckdb::LmDiskannExtension>();
 }
 
 DUCKDB_EXTENSION_API const char *vss_version() {

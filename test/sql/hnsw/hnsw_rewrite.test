@@ -1,4 +1,4 @@
-require vss
+require lm_diskann
 
 # Test that we rewrite (1 - array_cosine_similarity) to array_cosine_distance
 

@@ -1,4 +1,4 @@
-require vss
+require lm_diskann
 
 statement ok
 CREATE TABLE t1 (id int, vec FLOAT[3]);
@@ -19,12 +19,12 @@ statement ok
 pragma disable_optimizer;
 
 query I
-SELECT bool_and(score <= 1.0) FROM vss_join(s, t1, s_vec, vec, 3) as res;
+SELECT bool_and(score <= 1.0) FROM lm_diskann_join(s, t1, s_vec, vec, 3) as res;
 ----
 true
 
 query I
-SELECT len(matches) = 3 FROM s, vss_match(t1, s_vec, vec, 3) as res;
+SELECT len(matches) = 3 FROM s, lm_diskann_match(t1, s_vec, vec, 3) as res;
 ----
 true
 true
@@ -33,12 +33,12 @@ statement ok
 pragma enable_optimizer;
 
 query I
-SELECT bool_and(score <= 1.0) FROM vss_join(s, t1, s_vec, vec, 3) as res;
+SELECT bool_and(score <= 1.0) FROM lm_diskann_join(s, t1, s_vec, vec, 3) as res;
 ----
 true
 
 query I
-SELECT len(matches) = 3 FROM s, vss_match(t1, s_vec, vec, 3) as res;
+SELECT len(matches) = 3 FROM s, lm_diskann_match(t1, s_vec, vec, 3) as res;
 ----
 true
 true

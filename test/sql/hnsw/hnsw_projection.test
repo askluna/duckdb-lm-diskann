@@ -1,4 +1,4 @@
-require vss
+require lm_diskann
 
 require noforcestorage
 

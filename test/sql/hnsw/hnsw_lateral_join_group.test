@@ -1,4 +1,4 @@
-require vss
+require lm_diskann
 
 statement ok
 SELECT setseed(0.1337);

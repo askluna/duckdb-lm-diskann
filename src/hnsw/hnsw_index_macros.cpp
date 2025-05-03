@@ -7,7 +7,7 @@
 
 namespace duckdb {
 
-static constexpr auto VSS_JOIN_MACRO = R"(
+static constexpr auto LM_DISKANN_JOIN_MACRO = R"(
 SELECT
 	score,
 	left_tbl,
@@ -46,7 +46,7 @@ FROM
 	)
 )";
 
-static constexpr auto VSS_MATCH_MACRO = R"(
+static constexpr auto LM_DISKANN_MATCH_MACRO = R"(
 SELECT
 	right_tbl as matches,
 FROM
@@ -106,10 +106,10 @@ static void RegisterTableMacro(DatabaseInstance &db, const string &name, const s
 
 void HNSWModule::RegisterMacros(DatabaseInstance &db) {
 
-	RegisterTableMacro(db, "vss_join", VSS_JOIN_MACRO, {"left_table", "right_table", "left_col", "right_col", "k"},
+	RegisterTableMacro(db, "lm_diskann_join", LM_DISKANN_JOIN_MACRO, {"left_table", "right_table", "left_col", "right_col", "k"},
 	                   {{"metric", Value("l2sq")}});
 
-	RegisterTableMacro(db, "vss_match", VSS_MATCH_MACRO, {"right_table", "left_col", "right_col", "k"},
+	RegisterTableMacro(db, "lm_diskann_match", LM_DISKANN_MATCH_MACRO, {"right_table", "left_col", "right_col", "k"},
 	                   {{"metric", Value("l2sq")}});
 }
 

@@ -1,4 +1,4 @@
-require vss
+require lm_diskann
 
 statement ok
 CREATE TABLE a (a_vec FLOAT[3], a_id INT);

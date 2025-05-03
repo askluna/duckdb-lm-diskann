@@ -4,7 +4,7 @@
 
 namespace duckdb {
 
-class VssExtension : public Extension {
+class LmDiskannExtension : public Extension {
 public:
 	void Load(DuckDB &db) override;
 	std::string Name() override;

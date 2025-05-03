@@ -1,4 +1,4 @@
-require vss
+require lm_diskann
 
 load __TEST_DIR__/hnsw_reclaim_space.db
 
