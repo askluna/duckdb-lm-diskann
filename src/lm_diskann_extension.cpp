@@ -22,19 +22,19 @@ void LmDiskannExtension::Load(DuckDB &db) {
 }
 
 std::string LmDiskannExtension::Name() {
-	return "vss";
+	return "lm_diskann";
 }
 
 } // namespace duckdb
 
 extern "C" {
 
-DUCKDB_EXTENSION_API void vss_init(duckdb::DatabaseInstance &db) {
+DUCKDB_EXTENSION_API void lm_diskann_init(duckdb::DatabaseInstance &db) {
 	duckdb::DuckDB db_wrapper(db);
 	db_wrapper.LoadExtension<duckdb::LmDiskannExtension>();
 }
 
-DUCKDB_EXTENSION_API const char *vss_version() {
+DUCKDB_EXTENSION_API const char *lm_diskann_version() {
 	return duckdb::DuckDB::LibraryVersion();
 }
 }
