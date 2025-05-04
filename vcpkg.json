@@ -1,10 +1,5 @@
 {
   "dependencies": [
     "vcpkg-cmake"
-  ],
-  "vcpkg-configuration": {
-    "overlay-ports": [
-      "./vcpkg_ports"
-    ]
-  }
+  ]
 }
