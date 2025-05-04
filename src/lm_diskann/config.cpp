@@ -20,7 +20,6 @@ const char *LMDISKANN_ALPHA_OPTION = "ALPHA";
 const char *LMDISKANN_L_SEARCH_OPTION = "L_SEARCH";
 
 const LMDiskannMetricType LMDISKANN_DEFAULT_METRIC = LMDiskannMetricType::L2;
-// const LMDiskannEdgeType LMDISKANN_DEFAULT_EDGE_TYPE = LMDiskannEdgeType::SAME_AS_NODE; // Removed
 const uint32_t LMDISKANN_DEFAULT_R = 64;
 const uint32_t LMDISKANN_DEFAULT_L_INSERT = 128; // VECTOR_INSERT_L_DEFAULT
 const float LMDISKANN_DEFAULT_ALPHA = 1.2f;      // VECTOR_PRUNING_ALPHA_DEFAULT
@@ -64,7 +63,6 @@ idx_t GetTernaryPlaneSizeBytes(idx_t dimensions) {
 
 void ParseOptions(const case_insensitive_map_t<Value> &options,
                   LMDiskannMetricType &metric_type,
-                  // LMDiskannEdgeType &edge_type, // Removed
                   uint32_t &r, uint32_t &l_insert,
                   float &alpha, uint32_t &l_search) {
     // Apply defaults first
@@ -114,7 +112,6 @@ void ParseOptions(const case_insensitive_map_t<Value> &options,
 }
 
 void ValidateParameters(LMDiskannMetricType metric_type,
-                        // LMDiskannEdgeType edge_type_param, // Removed
                         uint32_t r, uint32_t l_insert, float alpha, uint32_t l_search) {
     if (r == 0) throw BinderException("LM_DISKANN parameter R must be > 0");
     if (l_insert == 0) throw BinderException("LM_DISKANN parameter L_INSERT must be > 0");

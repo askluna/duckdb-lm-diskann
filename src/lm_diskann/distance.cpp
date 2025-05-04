@@ -1,202 +1,212 @@
 #include "distance.hpp"
-#include "config.hpp" // Include config for enums
-#include "ternary_quantization.hpp" // For ternary encoding and kernels
+#include "ternary_quantization.hpp" // For EncodeTernary, GetKernel, WordsPerPlane
+// #include "config.hpp" // No longer needed here, included via distance.hpp indirectly or types are forward declared
 
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/types/vector.hpp" // For vector access if needed
-#include "duckdb/function/scalar/vector_functions.hpp" // For VectorDistance
-#include "duckdb/common/types/vector_operations/vector_operations.hpp" // For vector operations if needed directly
-#include "duckdb/common/types/value.hpp" // Might define float16_t or related types
-#include "duckdb/common/types/uhugeint.hpp" // Includes half.hpp potentially
+// #include "duckdb/parser/binder/binder_exception.hpp" // Removed: File not found
+// #include "duckdb/parser/parser_exception.hpp" // Removed: File not found
+#include "duckdb/common/limits.hpp" // For NumericLimits if needed
+#include "duckdb/common/types/vector.hpp" // Potentially for VectorOperations or Vector
+// #include "duckdb/function/scalar/vector_functions.hpp" // Removed: File not found / Exact function TBD
+#include "duckdb/common/types/value.hpp" // Needed for ParseOptions
+#include "duckdb/common/string_util.hpp" // Needed for ParseOptions
 
-#include <vector>
-#include <cmath>
-#include <cstring> // For memcpy
-#include <type_traits> // For std::is_same
+#include <cmath> // For std::sqrt, std::fabs
+#include <vector> // For temporary query plane buffers
+#include <stdexcept> // For runtime_error
+
 
 namespace duckdb {
 
-// Helper to potentially convert vector data to float for calculation
-template <typename T>
-void ConvertToFloat(const T *src, float *dst, idx_t count) {
-    if constexpr (std::is_same<T, float>::value) {
-        if (src != dst) { // Avoid self-copy
-             memcpy(dst, src, count * sizeof(float));
-        }
-    } else if constexpr (std::is_same<T, float16_t>::value) {
-        for (idx_t i = 0; i < count; ++i) {
-            dst[i] = float16_t::ToFloat(src[i]);
-        }
-    } else if constexpr (std::is_same<T, int8_t>::value) {
-        // FIXME: This simple cast/scaling is likely inaccurate.
-        // Proper INT8 distance needs scale/offset or specialized kernels.
-        // Using this for now as a placeholder.
-        for (idx_t i = 0; i < count; ++i) {
-            // Example: Scale to [-1, 1] range approximately
-            dst[i] = static_cast<float>(src[i]) / 128.0f;
-        }
-    } else {
-        throw NotImplementedException("Unsupported type for ConvertToFloat");
-    }
-}
-// Explicit instantiations
-template void ConvertToFloat<float>(const float*, float*, idx_t);
-// template void ConvertToFloat<float16_t>(const float16_t*, float*, idx_t);
-template void ConvertToFloat<int8_t>(const int8_t*, float*, idx_t);
+// --- Configuration Constants Definitions (matching declarations in config.hpp) ---
+// These need definitions somewhere, maybe config.cpp is better?
+// Putting them here for now, but consider moving.
+const char *LMDISKANN_METRIC_OPTION = "metric";
+const char *LMDISKANN_R_OPTION = "R";
+const char *LMDISKANN_L_INSERT_OPTION = "L_insert";
+const char *LMDISKANN_ALPHA_OPTION = "alpha";
+const char *LMDISKANN_L_SEARCH_OPTION = "L_search";
+
+const LMDiskannMetricType LMDISKANN_DEFAULT_METRIC = LMDiskannMetricType::L2;
+const uint32_t LMDISKANN_DEFAULT_R = 64;
+const uint32_t LMDISKANN_DEFAULT_L_INSERT = 256;
+const float LMDISKANN_DEFAULT_ALPHA = 1.2f;
+const uint32_t LMDISKANN_DEFAULT_L_SEARCH = 100; // Needs tuning
+const uint8_t LMDISKANN_CURRENT_FORMAT_VERSION = 1;
 
 
-// Calculates distance between two vectors (potentially different types).
-float ComputeDistance(const_data_ptr_t vec_a_ptr, LMDiskannVectorType type_a,
-                      const_data_ptr_t vec_b_ptr, LMDiskannVectorType type_b,
-                      idx_t dimensions, LMDiskannMetricType metric_type) {
+// --- Core Function Implementations ---
 
-    // Convert both vectors to float for using DuckDB's VectorDistance
-    // This is inefficient for non-float types but provides a starting point.
-    std::vector<float> vec_a_float(dimensions);
-    std::vector<float> vec_b_float(dimensions);
+// Helper function to get vector data pointer (adjust if Vector::GetData changes)
+// static inline const float* GetFloatDataPtr(const Vector& vec) { // Commented out: Not currently used
+// 	return FlatVector::GetData<float>(vec);
+// }
 
-    // Convert A
-    switch(type_a) {
-        case LMDiskannVectorType::FLOAT32:
-            ConvertToFloat(reinterpret_cast<const float*>(vec_a_ptr), vec_a_float.data(), dimensions);
-            break;
-        case LMDiskannVectorType::FLOAT16:
-             // ConvertToFloat(reinterpret_cast<const float16_t*>(vec_a_ptr), vec_a_float.data(), dimensions);
-             throw NotImplementedException("FLOAT16 distance support pending float16_t type resolution");
-            break;
-        case LMDiskannVectorType::INT8:
-            ConvertToFloat(reinterpret_cast<const int8_t*>(vec_a_ptr), vec_a_float.data(), dimensions);
-            break;
-        default: throw InternalException("Unsupported type_a in ComputeDistance");
-    }
 
-    // Convert B
-    switch(type_b) {
-        case LMDiskannVectorType::FLOAT32:
-            ConvertToFloat(reinterpret_cast<const float*>(vec_b_ptr), vec_b_float.data(), dimensions);
-            break;
-        case LMDiskannVectorType::FLOAT16:
-            // ConvertToFloat(reinterpret_cast<const float16_t*>(vec_b_ptr), vec_b_float.data(), dimensions);
-            throw NotImplementedException("FLOAT16 distance support pending float16_t type resolution");
-            break;
-        case LMDiskannVectorType::INT8:
-            ConvertToFloat(reinterpret_cast<const int8_t*>(vec_b_ptr), vec_b_float.data(), dimensions);
-            break;
-        default: throw InternalException("Unsupported type_b in ComputeDistance");
-    }
+float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr, idx_t dimensions, LMDiskannMetricType metric_type) {
+    // TODO: Ideally, use optimized DuckDB functions if possible, maybe via VectorOperations::Distance.
+    // For now, implement manually based on metric type.
+    // This is a placeholder and likely needs optimization/replacement.
 
-    const float *a_ptr = vec_a_float.data();
-    const float *b_ptr = vec_b_float.data();
-
-    // Calculate distance based on metric
     switch (metric_type) {
-        case LMDiskannMetricType::L2:
-             // Returns squared L2 distance
-             return VectorDistance::Exec<float, float, float>(a_ptr, b_ptr, dimensions, VectorDistanceType::L2);
-        case LMDiskannMetricType::COSINE:
-             // Returns 1 - cosine_similarity. Lower is better.
-             return VectorDistance::Exec<float, float, float>(a_ptr, b_ptr, dimensions, VectorDistanceType::COSINE);
-        case LMDiskannMetricType::IP:
-             // Returns -inner_product. Lower is better.
-             return -VectorDistance::Exec<float, float, float>(a_ptr, b_ptr, dimensions, VectorDistanceType::IP);
-        default:
-             throw InternalException("Unknown metric type in ComputeDistance");
-    }
-}
-
-
-// Calculates approximate distance between a full query vector (float)
-// and a compressed neighbor vector.
-float ComputeApproxDistance(const float *query_ptr, const_data_ptr_t compressed_neighbor_ptr,
-                            idx_t dimensions, LMDiskannMetricType metric_type,
-                            LMDiskannVectorType resolved_edge_vector_type) {
-
-    // Dispatch based on the *resolved* edge type stored in the index
-    switch(resolved_edge_vector_type) {
-        case LMDiskannVectorType::FLOAT32:
-            return ComputeDistance(const_data_ptr_cast(query_ptr), LMDiskannVectorType::FLOAT32,
-                                   compressed_neighbor_ptr, LMDiskannVectorType::FLOAT32,
-                                   dimensions, metric_type);
-        case LMDiskannVectorType::FLOAT16:
-            return ComputeDistance(const_data_ptr_cast(query_ptr), LMDiskannVectorType::FLOAT32,
-                                   compressed_neighbor_ptr, LMDiskannVectorType::FLOAT16,
-                                   dimensions, metric_type);
-        case LMDiskannVectorType::INT8:
-            // Warning: Accuracy depends heavily on how INT8 was created and how distance is calculated.
-            return ComputeDistance(const_data_ptr_cast(query_ptr), LMDiskannVectorType::FLOAT32,
-                                   compressed_neighbor_ptr, LMDiskannVectorType::INT8,
-                                   dimensions, metric_type);
-        case LMDiskannVectorType::UNKNOWN: // Represents FLOAT1BIT
-            if (metric_type == LMDiskannMetricType::COSINE) {
-                 // FIXME: Implement Hamming distance / popcount for FLOAT1BIT Cosine approximation
-                 // Calculate Hamming distance between query (needs binarization) and compressed_neighbor_ptr
-                 // Convert Hamming distance to approximate Cosine distance.
-                 throw NotImplementedException("Approximate distance for FLOAT1BIT not implemented.");
-            } else {
-                 throw InternalException("FLOAT1BIT edge type used with non-COSINE metric.");
+        case LMDiskannMetricType::L2: {
+            float distance = 0.0f;
+            for (idx_t i = 0; i < dimensions; ++i) {
+                float diff = a_ptr[i] - b_ptr[i];
+                distance += diff * diff;
             }
-            break;
-        default:
-             throw InternalException("Unsupported resolved edge vector type in ComputeApproxDistance.");
+            return std::sqrt(distance);
+        }
+        case LMDiskannMetricType::IP: { // Inner Product Distance = -IP
+            float dot_product = 0.0f;
+            for (idx_t i = 0; i < dimensions; ++i) {
+                dot_product += a_ptr[i] * b_ptr[i];
+            }
+            return -dot_product; // Return negative IP as distance
+        }
+        case LMDiskannMetricType::COSINE: { // Cosine Distance = 1 - Cosine Similarity
+            float dot_product = 0.0f;
+            float norm_a = 0.0f;
+            float norm_b = 0.0f;
+            for (idx_t i = 0; i < dimensions; ++i) {
+                dot_product += a_ptr[i] * b_ptr[i];
+                norm_a += a_ptr[i] * a_ptr[i];
+                norm_b += b_ptr[i] * b_ptr[i];
+            }
+            norm_a = std::sqrt(norm_a);
+            norm_b = std::sqrt(norm_b);
+            if (norm_a == 0.0f || norm_b == 0.0f) {
+                return 1.0f; // Handle zero vectors: max distance
+            }
+            float cosine_similarity = dot_product / (norm_a * norm_b);
+            // Clamp similarity to [-1, 1] due to potential floating point inaccuracies
+            cosine_similarity = std::max(-1.0f, std::min(1.0f, cosine_similarity));
+            return 1.0f - cosine_similarity;
+        }
+        default: {
+            // Use base Exception as specific types (BinderException, ParserException) couldn't be found.
+            throw Exception(ExceptionType::INVALID_INPUT, "ComputeExactDistanceFloat: Unsupported metric type");
+        }
     }
 }
 
 
-// Calculates approximate SIMILARITY between a full query vector (float)
-// and a compressed TERNARY neighbor vector using its separate planes.
-// Returns a raw similarity score (higher is better).
-float ComputeApproxSimilarityTernary(const float *query_ptr,
-                                     const_data_ptr_t pos_plane_ptr,
-                                     const_data_ptr_t neg_plane_ptr,
-                                     idx_t dimensions, LMDiskannMetricType metric_type) {
+float ComputeApproxSimilarityTernary(const float *query_float_ptr,
+                                     const_data_ptr_t neighbor_pos_plane_ptr,
+                                     const_data_ptr_t neighbor_neg_plane_ptr,
+                                     idx_t dimensions,
+                                     LMDiskannMetricType metric_type) {
 
-    // Metric validation (Ternary is only valid for COSINE or IP)
-    if (metric_type == LMDiskannMetricType::L2) {
-        throw InternalException("ComputeApproxSimilarityTernary called with L2 metric.");
-    }
+    // 1. Prepare query planes
+    const size_t words_per_vector = WordsPerPlane(dimensions);
+    std::vector<uint64_t> query_pos_plane_vec(words_per_vector);
+    std::vector<uint64_t> query_neg_plane_vec(words_per_vector);
 
-    // 1. Calculate size and allocate query planes
-    const size_t words_per_plane = WordsPerPlane(dimensions);
-    std::vector<uint64_t> query_pos_plane_vec(words_per_plane);
-    std::vector<uint64_t> query_neg_plane_vec(words_per_plane);
+    EncodeTernary(query_float_ptr, query_pos_plane_vec.data(), query_neg_plane_vec.data(), dimensions);
 
-    // 2. Encode the float query into ternary planes
-    EncodeTernary(query_ptr, query_pos_plane_vec.data(), query_neg_plane_vec.data(), dimensions);
-
-    // 3. Get the best available dot product kernel
+    // 2. Get the appropriate SIMD kernel
     dot_fun_t dot_kernel = GetKernel();
 
-    // 4. Call the kernel with query planes and the neighbor's stored planes
-    // Note: Need const_cast or reinterpret_cast if kernel expects non-const uint64_t*
+    // 3. Compute the raw ternary dot product score
+    // Note: The ternary kernel itself doesn't use the metric_type, it always computes the same score.
+    // The interpretation (similarity vs. distance proxy) happens outside.
     int64_t raw_score = dot_kernel(
         query_pos_plane_vec.data(),
         query_neg_plane_vec.data(),
-        reinterpret_cast<const uint64_t*>(pos_plane_ptr),
-        reinterpret_cast<const uint64_t*>(neg_plane_ptr),
-        words_per_plane
+        reinterpret_cast<const uint64_t*>(neighbor_pos_plane_ptr),
+        reinterpret_cast<const uint64_t*>(neighbor_neg_plane_ptr),
+        words_per_vector
     );
 
-    // 5. Return the raw similarity score
-    // Higher score indicates higher similarity (closer vectors for IP/Cosine)
-    // The caller needs to handle this (e.g., negate for min-heap, flip comparisons).
+    // 4. Return the raw score as float (higher is better similarity)
     return static_cast<float>(raw_score);
 }
 
-
-// Compresses a float vector into the TERNARY format using separate pos/neg planes.
 void CompressVectorToTernary(const float* input_float_ptr,
                              data_ptr_t dest_pos_plane_ptr,
                              data_ptr_t dest_neg_plane_ptr,
                              idx_t dimensions) {
 
-     // Directly call the encoding function from ternary_quantization.hpp
-     EncodeTernary(
-         input_float_ptr,
-         reinterpret_cast<uint64_t*>(dest_pos_plane_ptr),
-         reinterpret_cast<uint64_t*>(dest_neg_plane_ptr),
-         dimensions
-     );
+    EncodeTernary(
+        input_float_ptr,
+        reinterpret_cast<uint64_t*>(dest_pos_plane_ptr),
+        reinterpret_cast<uint64_t*>(dest_neg_plane_ptr),
+        dimensions
+    );
 }
 
+
+// --- Configuration Function Implementations ---
+
+// Parses options from the CREATE INDEX statement's WITH clause.
+void ParseOptions(const case_insensitive_map_t<Value> &options,
+                  LMDiskannMetricType &metric_type,
+                  uint32_t &r, uint32_t &l_insert,
+                  float &alpha, uint32_t &l_search) {
+
+    metric_type = LMDISKANN_DEFAULT_METRIC;
+    r = LMDISKANN_DEFAULT_R;
+    l_insert = LMDISKANN_DEFAULT_L_INSERT;
+    alpha = LMDISKANN_DEFAULT_ALPHA;
+    l_search = LMDISKANN_DEFAULT_L_SEARCH;
+
+    for (const auto &kv : options) {
+        auto loption = StringUtil::Lower(kv.first);
+        const auto &value = kv.second;
+
+        if (loption == LMDISKANN_METRIC_OPTION) {
+            auto metric_str = StringUtil::Lower(value.ToString());
+            if (metric_str == "l2") {
+                metric_type = LMDiskannMetricType::L2;
+            } else if (metric_str == "cosine") {
+                metric_type = LMDiskannMetricType::COSINE;
+            } else if (metric_str == "ip") {
+                metric_type = LMDiskannMetricType::IP;
+            } else {
+                // Use base Exception as specific types (BinderException, ParserException) couldn't be found.
+                throw Exception(ExceptionType::INVALID_INPUT, StringUtil::Format("Unknown LM-DiskANN metric type: '%s'. Options are l2, cosine, ip", value.ToString()));
+            }
+        } else if (loption == LMDISKANN_R_OPTION) {
+            r = value.GetValue<uint32_t>();
+        } else if (loption == LMDISKANN_L_INSERT_OPTION) {
+            l_insert = value.GetValue<uint32_t>();
+        } else if (loption == LMDISKANN_ALPHA_OPTION) {
+            alpha = value.GetValue<float>();
+        } else if (loption == LMDISKANN_L_SEARCH_OPTION) {
+            l_search = value.GetValue<uint32_t>();
+        } else {
+             // Use base Exception
+            throw Exception(ExceptionType::INVALID_INPUT, StringUtil::Format("Unknown LM-DiskANN option: %s", kv.first));
+        }
+    }
+
+    // Call validation after parsing
+    ValidateParameters(metric_type, r, l_insert, alpha, l_search);
+}
+
+// Validates the combination of parameters.
+void ValidateParameters(LMDiskannMetricType metric_type,
+                        uint32_t r, uint32_t l_insert, float alpha, uint32_t l_search) {
+    // Use base Exception
+    if (metric_type == LMDiskannMetricType::UNKNOWN) {
+         throw Exception(ExceptionType::INVALID_INPUT, "LM-DiskANN metric type cannot be UNKNOWN");
+    }
+    if (r == 0) {
+        throw Exception(ExceptionType::INVALID_INPUT, "LM-DiskANN R must be > 0");
+    }
+    if (l_insert == 0) {
+        throw Exception(ExceptionType::INVALID_INPUT, "LM-DiskANN L_insert must be > 0");
+    }
+     if (alpha <= 1.0f) {
+        throw Exception(ExceptionType::INVALID_INPUT, "LM-DiskANN alpha must be > 1.0");
+    }
+    if (l_search == 0) {
+        throw Exception(ExceptionType::INVALID_INPUT, "LM-DiskANN L_search must be > 0");
+    }
+    if (l_search < 1) { // Or some other reasonable minimum K for search?
+         throw Exception(ExceptionType::INVALID_INPUT, "LM-DiskANN L_search must be at least 1");
+    }
+    // Add any other cross-parameter validation if needed
+}
 
 } // namespace duckdb

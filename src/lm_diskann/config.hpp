@@ -3,6 +3,7 @@
 #include "duckdb.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/execution/index/index_pointer.hpp"
 
 #include <cstdint>
 
@@ -32,14 +33,14 @@ enum class LMDiskannVectorType : uint8_t {
 
 // --- Struct to hold calculated layout offsets ---
 // Stores the byte offsets of different data sections within a node's disk block.
-// Crucial for low-level node accessors.
+// Crucial for low-level node accessors. Assumes TERNARY compressed neighbors.
 struct NodeLayoutOffsets {
-    idx_t neighbor_count = 0; // Offset of the neighbor count (uint16_t)
-    idx_t node_vector = 0;    // Offset of the start of the node's full vector data
-    idx_t neighbor_ids = 0;   // Offset of the start of the neighbor row_t array
-    idx_t pos_planes = 0;     // Offset of the start of the positive ternary planes array
-    idx_t neg_planes = 0;     // Offset of the start of the negative ternary planes array
-    idx_t total_size = 0;     // Total size *before* final block alignment
+    idx_t neighbor_count_offset = 0; // Offset of the neighbor count (uint16_t) - Typically 0
+    idx_t node_vector_offset = 0;    // Offset of the start of the node's full vector data
+    idx_t neighbor_ids_offset = 0;   // Offset of the start of the neighbor row_t array
+    idx_t neighbor_pos_planes_offset = 0; // Offset of the start of the positive ternary planes array
+    idx_t neighbor_neg_planes_offset = 0; // Offset of the start of the negative ternary planes array
+    idx_t total_node_size = 0;     // Total size *before* final block alignment (used for allocation/memcpy)
 };
 
 
@@ -73,14 +74,32 @@ void ParseOptions(const case_insensitive_map_t<Value> &options,
 void ValidateParameters(LMDiskannMetricType metric_type,
                         uint32_t r, uint32_t l_insert, float alpha, uint32_t l_search);
 
-// Calculates the byte size of different vector types.
+// Calculates the byte size of different node vector types.
 idx_t GetVectorTypeSizeBytes(LMDiskannVectorType type);
-// Calculates the byte size of the compressed ternary format per neighbor (both planes).
-idx_t GetTernaryVectorSizeBytes(idx_t dimensions);
+// Calculates the byte size of the compressed ternary format per neighbor (both planes combined).
+idx_t GetTernaryVectorSizeBytes(idx_t dimensions); // Size per neighbor
 
 // Calculates the internal layout offsets within a node block.
 // Implicitly assumes TERNARY neighbors.
 NodeLayoutOffsets CalculateLayoutInternal(idx_t dimensions, idx_t r,
                                           idx_t node_vector_size_bytes);
+
+// --- Metadata Struct --- //
+// Holds all parameters persisted in the index metadata block.
+struct LMDiskannMetadata {
+    uint8_t format_version = 0;                  // Internal format version for compatibility
+    LMDiskannMetricType metric_type = LMDiskannMetricType::UNKNOWN; // Distance metric used
+    LMDiskannVectorType node_vector_type = LMDiskannVectorType::UNKNOWN; // Type of vectors stored in nodes
+    // Edge type is implicitly Ternary, no need to store explicitly
+    idx_t dimensions = 0;                        // Vector dimensionality
+    uint32_t r = 0;                              // Max neighbors per node (graph degree)
+    uint32_t l_insert = 0;                       // Search list size during insertion
+    float alpha = 0.0f;                          // Pruning factor during insertion
+    uint32_t l_search = 0;                       // Search list size during query
+    idx_t block_size_bytes = 0;                  // Size of each node block on disk
+    IndexPointer graph_entry_point_ptr;          // Pointer to the entry node block
+    IndexPointer delete_queue_head_ptr;          // Pointer to the head of the delete queue block
+    // IndexPointer rowid_map_root_ptr; // TODO: Add when ART is integrated
+};
 
 } // namespace duckdb

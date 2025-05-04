@@ -88,8 +88,7 @@ private:
     // --- Core Parameters (Resolved) ---
     LMDiskannMetricType metric_type_;
     LMDiskannVectorType node_vector_type_;
-    LMDiskannEdgeType edge_vector_type_param_; // As specified by user
-    LMDiskannVectorType resolved_edge_vector_type_; // Actual type used for edges
+    LMDiskannVectorType resolved_edge_vector_type_; // Actual type used for edges (Should always reflect ternary? Or keep for consistency? Let's assume it reflects ternary implicitly)
     idx_t dimensions_;
     uint32_t r_; // Max neighbors (degree)
     uint32_t l_insert_;
@@ -125,6 +124,10 @@ private:
 
     // --- Helper Methods (Private to LMDiskannIndex) ---
     // These coordinate calls to the specialized modules.
+    void ParseOptions(const case_insensitive_map_t<Value> &options);
+    void ValidateParameters();
+    void CalculateLayoutInternal();
+
     void InitializeNewIndex(idx_t estimated_cardinality);
     void LoadFromStorage(const IndexStorageInfo &storage_info);
 
@@ -133,12 +136,6 @@ private:
     IndexPointer AllocateNode(row_t row_id); // Allocates block and updates map
     void DeleteNodeFromMapAndFreeBlock(row_t row_id); // Deletes from map and potentially frees block
     BufferHandle GetNodeBuffer(IndexPointer node_ptr, bool write_lock = false); // Pins block using IndexPointer
-
-    // --- Distance Function Wrappers ---
-    // Provide convenient access to distance calculations using index state.
-    template <typename T_A, typename T_B>
-    float CalculateDistance(const T_A *vec_a, const T_B *vec_b);
-    float CalculateApproxDistance(const float *query_ptr, const_data_ptr_t compressed_neighbor_ptr);
 
     // --- Insertion Helper ---
     void FindAndConnectNeighbors(row_t new_node_rowid, IndexPointer new_node_ptr, const float *new_node_vector);

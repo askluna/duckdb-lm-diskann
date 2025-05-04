@@ -1,6 +1,6 @@
 
 #include "storage.hpp"
-#include "lm_diskann_node.hpp" // For accessors if needed by queue processing
+#include "node.hpp" // For accessors if needed by queue processing
 
 #include "duckdb/execution/index/fixed_size_allocator.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
@@ -9,7 +9,7 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/common/printer.hpp"
 #include "duckdb/common/limits.hpp" // For NumericLimits
-#include "duckdb/common/types/data_ptr.hpp" // For Load/Store
+#include "duckdb/storage/data_pointer.hpp" // For Load/Store
 
 // Include for ART index (if/when implemented)
 // #include "duckdb/storage/art/art.hpp"
@@ -78,7 +78,6 @@ void PersistMetadata(IndexPointer metadata_ptr, AttachedDatabase &db, FixedSizeA
      writer.Write<uint8_t>(format_version);
      writer.Write<LMDiskannMetricType>(metric_type);
      writer.Write<LMDiskannVectorType>(node_vector_type);
-     writer.Write<LMDiskannEdgeType>(edge_vector_type_param); // Persist the user's choice
      writer.Write<idx_t>(dimensions);
      writer.Write<uint32_t>(r);
      writer.Write<uint32_t>(l_insert);
@@ -114,7 +113,6 @@ void LoadMetadata(IndexPointer metadata_ptr, AttachedDatabase &db, FixedSizeAllo
      // Version check should happen in the caller (LMDiskannIndex constructor)
      reader.Read<LMDiskannMetricType>(metric_type);
      reader.Read<LMDiskannVectorType>(node_vector_type);
-     reader.Read<LMDiskannEdgeType>(edge_vector_type_param);
      reader.Read<idx_t>(dimensions);
      reader.Read<uint32_t>(r);
      reader.Read<uint32_t>(l_insert);

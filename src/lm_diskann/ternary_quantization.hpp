@@ -11,13 +11,28 @@
 //
 //  Layout & Compression:
 //  ---------------------
-//  • Each original D-dimensional vector is converted into two bit-planes:
-//    - Positive Plane (posPlane): A bit is set if the original element was > 0.
-//    - Negative Plane (negPlane): A bit is set if the original element was < 0.
-//    (If both bits are 0, the original element was 0).
-//  • This requires 2 bits per dimension.
-//  • Planes are stored as arrays of `uint64_t` words.
-//  • Total storage per vector ≈ (2 * D / 8) bytes = 0.25 * D bytes.
+//  • Each original D-dimensional vector is converted into two bit-planes.
+//    A "bit-plane" is a sequence of bits representing sign information, where
+//    the position of each bit corresponds directly to a dimension in the
+//    original vector.
+//
+//    - Positive Plane (`posPlane`): A sequence of bits where the d-th bit is
+//      set to `1` if the d-th element of the original vector was `> 0`,
+//      and `0` otherwise.
+//
+//    - Negative Plane (`negPlane`): A sequence of bits where the d-th bit is
+//      set to `1` if the d-th element of the original vector was `< 0`,
+//      and `0` otherwise.
+//
+//    (If the d-th element was exactly `0`, the d-th bit in both `posPlane`
+//     and `negPlane` remains `0`).
+//
+//  • This representation requires exactly 2 bits per original dimension.
+//  • Each plane (positive and negative) is stored as a contiguous array of
+//    `uint64_t` words. The `d`-th bit overall corresponds to bit `(d % 64)`
+//    within word `(d / 64)`.
+//  • Total storage per compressed vector: `2 * WordsPerPlane(dims) * sizeof(uint64_t)` bytes,
+//    which simplifies to approximately `ceil(2 * D / 8)` or `0.25 * D` bytes.
 //  • Data is aligned to 64-bit boundaries (`uint64_t`) for efficient SIMD access.
 //
 //  SIMD Kernels & Dispatch:
@@ -99,7 +114,6 @@ inline constexpr size_t WordsPerPlane(size_t dims) {
 //--------------------------------------------------------------------
 // Ternary Encoding Functions
 //--------------------------------------------------------------------
-
 /**
  * @brief Encodes a single dense vector into two ternary bit-planes.
  * @tparam Scalar The data type of the source vector (e.g., float, double).
@@ -107,11 +121,11 @@ inline constexpr size_t WordsPerPlane(size_t dims) {
  * @param[out] pos Pointer to the start of the positive bit-plane buffer (must have WordsPerPlane(dims) capacity).
  * @param[out] neg Pointer to the start of the negative bit-plane buffer (must have WordsPerPlane(dims) capacity).
  * @param dims The number of dimensions in the source vector.
- * @details Iterates through the source vector. For each dimension 'd':
- * - If src[d] > 0, sets the d-th bit in the 'pos' plane.
- * - If src[d] < 0, sets the d-th bit in the 'neg' plane.
- * - If src[d] == 0, both bits remain 0.
- * The bit position is calculated as word_index = d / 64, bit_in_word = d % 64.
+ * @details Iterates through the source vector. For each dimension 'd', it determines
+ * the sign of the value `src[d]`.
+ * - Based on the sign, it sets the corresponding d-th bit in either the positive (`pos`) or negative (`neg`) bit-plane.
+ * - The position of the bit within the plane array (`pos` or `neg`) directly corresponds to the dimension index `d`.
+ * - Uses bitwise operations for efficient setting of individual bits within `uint64_t` words.
  */
 template <typename Scalar>
 inline void EncodeTernary(const Scalar* src, uint64_t* pos, uint64_t* neg,
@@ -122,35 +136,43 @@ inline void EncodeTernary(const Scalar* src, uint64_t* pos, uint64_t* neg,
     assert(neg != nullptr && "Negative plane buffer pointer cannot be null");
     assert(dims > 0 && "Dimensions must be positive");
 
-    // Calculate the number of 64-bit words needed for the planes.
+    // Calculate the number of 64-bit words required to store 'dims' bits for each plane.
     const size_t words = WordsPerPlane(dims);
 
-    // Zero out the destination buffers before setting bits.
-    // Check words > 0, although memset with size 0 is usually a no-op.
+    // Zero out the destination buffers (bit-planes) before setting bits.
+    // This ensures that bits corresponding to zero values in 'src' remain 0 in both planes.
     if (words > 0) {
         std::memset(pos, 0, words * sizeof(uint64_t));
         std::memset(neg, 0, words * sizeof(uint64_t));
     }
 
-    // Loop through each dimension of the source vector.
+    // Loop through each dimension 'd' of the source vector.
     for (size_t d = 0; d < dims; ++d) {
-        const Scalar value = src[d];
-        // Determine the word index and bit index within that word.
+        const Scalar value = src[d]; // Get the original value at dimension 'd'.
+
+        // --- Determine the exact bit position corresponding to dimension 'd' ---
+        // Calculate which uint64_t word contains the bit for dimension 'd'.
         const size_t word_idx = d >> 6; // Equivalent to d / 64
+        // Calculate the bit index (0-63) within that word for dimension 'd'.
         const size_t bit_idx  = d & 63;  // Equivalent to d % 64
-        // Create a mask with only the target bit set.
+
+        // Create a 64-bit mask with only the 'bit_idx'-th bit set to 1.
+        // This mask isolates the specific bit representing dimension 'd'.
         const uint64_t mask = 1ULL << bit_idx;
 
-        // Check the sign of the value and set the corresponding bit.
+        // --- Set the bit in the appropriate plane based on the value's sign ---
         // Use a small epsilon for floating-point comparisons against zero, if necessary,
         // although direct comparison is often sufficient for this ternary scheme.
         // static constexpr Scalar zero_threshold = std::numeric_limits<Scalar>::epsilon();
         if (value > Scalar(0)) { // Positive value
-            pos[word_idx] |= mask; // Set bit in positive plane
+            // Set the 'bit_idx'-th bit of the 'word_idx'-th word in the 'pos' plane to 1.
+            // The bitwise OR (`|=`) operation ensures other bits in the word are unaffected.
+            pos[word_idx] |= mask;
         } else if (value < Scalar(0)) { // Negative value
-            neg[word_idx] |= mask; // Set bit in negative plane
+            // Set the 'bit_idx'-th bit of the 'word_idx'-th word in the 'neg' plane to 1.
+            neg[word_idx] |= mask;
         }
-        // If value is zero (or close to zero), neither bit is set.
+        // If value is zero (or close to zero), neither bit is set, correctly representing the '0' state.
     }
 }
 

@@ -3,7 +3,7 @@
 // Include refactored component headers
 #include "config.hpp"
 #include "node.hpp"
-#include "storage.hpp" // Include for prototypes (even if placeholders)
+#include "storage.hpp" 
 #include "search.hpp"
 #include "distance.hpp"
 #include "state.hpp"
@@ -43,102 +43,85 @@ LMDiskannIndex::LMDiskannIndex(const string &name, IndexConstraintType index_con
       format_version_(LMDISKANN_CURRENT_FORMAT_VERSION), // Set current format version
       graph_entry_point_rowid_(NumericLimits<row_t>::Maximum()) // Initialize entry point rowid as invalid
 {
-    // Basic validation (moved from original constructor)
-    if (index_constraint_type != IndexConstraintType::NONE) {
-        throw NotImplementedException("LM_DISKANN indexes do not support UNIQUE or PRIMARY KEY constraints");
-    }
+    // 1. Parse Options directly into member variables & Validate
+    ParseOptions(options); // Helper to parse into metric_type_, r_, etc.
+    ValidateParameters(); // Helper to validate member variables
+
+    // Set fixed edge type (ternary)
+    resolved_edge_vector_type_ = LMDiskannVectorType::UNKNOWN; // Represents Ternary
+
+    // Get indexed column type and validate against node_vector_type_ and dimensions_
     if (logical_types.size() != 1) {
-         throw BinderException("LM_DISKANN index can only be created over a single column.");
+        throw BinderException("LM_DISKANN index can only be created on a single column.");
     }
-    if (logical_types[0].id() != LogicalTypeId::ARRAY) {
-        throw BinderException("LM_DISKANN index can only be created over ARRAY types.");
-    }
-
-    // --- 1. Determine Node Vector Type and Dimensions ---
     indexed_column_type_ = logical_types[0];
-    auto &vector_child_type = ArrayType::GetChildType(indexed_column_type_);
-    dimensions_ = ArrayType::GetSize(indexed_column_type_);
-    if (dimensions_ == 0) {
-         throw BinderException("Cannot create LM_DISKANN index on ARRAY with unknown size.");
+    if (indexed_column_type_.id() != LogicalTypeId::ARRAY || ArrayType::GetChildType(indexed_column_type_).id() == LogicalTypeId::INVALID) {
+        throw BinderException("LM_DISKANN index can only be created on ARRAY types (e.g., FLOAT[N]).");
     }
-    constexpr idx_t MAX_VECTOR_SZ = 65536; // Define appropriately
-    if (dimensions_ > MAX_VECTOR_SZ) {
-         throw BinderException("Cannot create LM_DISKANN index on ARRAY with dimensions > %d", MAX_VECTOR_SZ);
+    auto array_child_type = ArrayType::GetChildType(indexed_column_type_);
+    auto array_size = ArrayType::GetSize(indexed_column_type_);
+
+    if (array_size != dimensions_) {
+        throw BinderException("Index dimension parameter (%d) does not match ARRAY size (%d).", dimensions_,
+                            array_size);
     }
-
-    switch (vector_child_type.id()) {
-    case LogicalTypeId::FLOAT: node_vector_type_ = LMDiskannVectorType::FLOAT32; break;
-    case LogicalTypeId::TINYINT: node_vector_type_ = LMDiskannVectorType::INT8; break;
-    case LogicalTypeId::FLOAT16: node_vector_type_ = LMDiskannVectorType::FLOAT16; break;
-    default: throw BinderException("Unsupported vector type for LM_DISKANN index: %s.", vector_child_type.ToString());
+    LogicalTypeId column_child_id = array_child_type.id();
+    bool type_match = false;
+    switch (node_vector_type_) {
+        case LMDiskannVectorType::FLOAT32: type_match = (column_child_id == LogicalTypeId::FLOAT); break;
+        case LMDiskannVectorType::INT8: type_match = (column_child_id == LogicalTypeId::TINYINT); break;
+        default: throw BinderException("Unsupported node_vector_type specified.");
     }
-
-    // --- 2. Parse User-Provided Options (using config module) ---
-    ParseOptions(options, metric_type_, edge_vector_type_param_, r_, l_insert_, alpha_, l_search_);
-
-    // --- 3. Resolve Edge Vector Type ---
-    if (edge_vector_type_param_ == LMDiskannEdgeType::SAME_AS_NODE) {
-        resolved_edge_vector_type_ = node_vector_type_;
-    } else {
-        // Map EdgeType enum back to VectorType enum if applicable
-        switch(edge_vector_type_param_) {
-            case LMDiskannEdgeType::FLOAT32: resolved_edge_vector_type_ = LMDiskannVectorType::FLOAT32; break;
-            case LMDiskannEdgeType::FLOAT16: resolved_edge_vector_type_ = LMDiskannVectorType::FLOAT16; break;
-            case LMDiskannEdgeType::INT8:    resolved_edge_vector_type_ = LMDiskannVectorType::INT8; break;
-            case LMDiskannEdgeType::FLOAT1BIT: resolved_edge_vector_type_ = LMDiskannVectorType::UNKNOWN; break;
-            case LMDiskannEdgeType::TERNARY: resolved_edge_vector_type_ = LMDiskannVectorType::UNKNOWN; break; // Special type
-            default: throw InternalException("Unexpected LMDiskannEdgeType parameter");
-        }
+    if (!type_match) {
+        throw BinderException("Index node_vector_type '%s' does not match column's ARRAY child type '%s'.",
+                            EnumUtil::ToString(node_vector_type_), array_child_type.ToString());
     }
 
-    // --- 4. Validate Parameters (using config module) ---
-    ValidateParameters(metric_type_, edge_vector_type_param_, r_, l_insert_, alpha_, l_search_);
+    // Validate Metric Compatibility (especially with implicit Ternary edges)
+    if (metric_type_ == LMDiskannMetricType::L2) {
+         throw BinderException("L2 metric is not compatible with the implicit Ternary edge representation.");
+    }
 
-    // --- 5. Calculate Sizes and Layout (using config module) ---
-    CalculateSizesAndLayout(); // Sets member variables
+    // 3. Calculate Layout based on member variables
+    CalculateLayoutInternal(); // Helper sets node_layout_, block_size_bytes_, etc.
 
-    // --- 6. Initialize Storage ---
-    allocator_ = make_uniq<FixedSizeAllocator>(block_size_bytes_, table_io_manager_.GetIndexBlockManager());
+    // 4. Initialize Storage
+    auto &buffer_manager = BufferManager::GetBufferManager(db);
+    allocator_ = make_uniq<FixedSizeAllocator>(buffer_manager, block_size_bytes_);
 
-    // --- 7. Load Existing Index or Initialize New One ---
+    // 5. Load or Initialize
     if (storage_info.IsValid()) {
-        LoadFromStorage(storage_info);
+        metadata_ptr_ = storage_info.GetMetaBlockPointer();
+        LoadFromStorage(storage_info); // Uses member variables
     } else {
         InitializeNewIndex(estimated_cardinality);
     }
 
-    // --- 8. Initialize RowID Mapping (In-Memory - No Load Needed Yet) ---
-    // If persistent map were used: LoadRowIDMap();
-
-    // --- 9. Load PQ Codebooks (Placeholder) ---
-    // LoadPQ();
-
-    // --- Logging ---
-    Printer::Print(StringUtil::Format("LM_DISKANN Index '%s': Metric=%d, Dim=%lld, R=%d, L_insert=%d, Alpha=%.2f, L_search=%d, BlockSize=%lld, EdgeType=%d",
-                                      name, (int)metric_type_, dimensions_, r_, l_insert_, alpha_, l_search_, block_size_bytes_, (int)edge_vector_type_param_));
+     // --- Logging (using member variables) ---
+      Printer::Print(StringUtil::Format("LM_DISKANN Index '%s': Metric=%d, Dim=%lld, R=%d, L_insert=%d, Alpha=%.2f, L_search=%d, BlockSize=%lld, EdgeType=TERNARY",
+                                       name, (int)metric_type_, dimensions_, r_, l_insert_, alpha_, l_search_, block_size_bytes_));
 }
 
 LMDiskannIndex::~LMDiskannIndex() = default;
 
 // --- BoundIndex Method Implementations (Delegating) ---
 
-ErrorData LMDiskannIndex::Append(IndexLock &lock, DataChunk &entries, Vector &row_identifiers) {
-    // Use Insert logic for now, can be optimized later
-    if (entries.size() == 0) {
+ErrorData LMDiskannIndex::Append(IndexLock &lock, DataChunk &input, Vector &row_ids) {
+    if (input.size() == 0) {
         return ErrorData();
     }
-    row_identifiers.Flatten(entries.size()); // Ensure row identifiers are flat
+    row_ids.Flatten(input.size()); // Ensure row identifiers are flat
 
     DataChunk input_chunk;
-    input_chunk.InitializeEmpty({entries.data[0].GetType()});
+    input_chunk.InitializeEmpty({input.data[0].GetType()});
     Vector row_id_vector(LogicalType::ROW_TYPE);
 
-    for(idx_t i = 0; i < entries.size(); ++i) {
+    for(idx_t i = 0; i < input.size(); ++i) {
         input_chunk.Reset();
-        input_chunk.data[0].Slice(entries.data[0], i, i + 1);
+        input_chunk.data[0].Slice(input.data[0], i, i + 1);
         input_chunk.SetCardinality(1);
 
-        row_id_vector.Slice(row_identifiers, i, i + 1);
+        row_id_vector.Slice(row_ids, i, i + 1);
         row_id_vector.Flatten(1);
 
         auto err = Insert(lock, input_chunk, row_id_vector);
@@ -260,19 +243,12 @@ ErrorData LMDiskannIndex::Insert(IndexLock &lock, DataChunk &data, Vector &row_i
      return ErrorData(); // Success
 }
 
-IndexStorageInfo LMDiskannIndex::GetStorageInfo(const bool get_buffers) {
-     // Persist metadata if dirty
-     if (is_dirty_) {
-          PersistMetadata(); // Persists internal state via storage module
-     }
-     IndexStorageInfo info;
-     info.name = name;
-     info.root_block = metadata_ptr_.GetBlockId();
-     info.root_offset = metadata_ptr_.GetOffset();
-     info.allocator_infos.push_back(allocator_->GetInfo());
-     // Add rowid_map_root persistence info if implemented
-     if (get_buffers) { /* Handle WAL buffer logic if ever needed */ }
-     return info;
+IndexStorageInfo LMDiskannIndex::GetStorageInfo(bool get_buffers) {
+    IndexStorageInfo info;
+    info.name = name;
+    info.metadata_pointer = metadata_ptr_;
+    info.allocator_info = allocator_->GetInfo();
+    return info;
 }
 
 idx_t LMDiskannIndex::GetInMemorySize() {
@@ -295,9 +271,8 @@ void LMDiskannIndex::Vacuum(IndexLock &state) {
 }
 
 string LMDiskannIndex::VerifyAndToString(IndexLock &state, const bool only_verify) {
-    // Delegate verification logic to storage/search modules if needed
-    if (only_verify) { return "VerifyAndToString(verify_only) not implemented for LM_DISKANN"; }
-    else { return "VerifyAndToString not implemented for LM_DISKANN"; }
+    // TODO: Implement verification logic
+    return "LMDiskannIndex [Not Verified]";
 }
 
 void LMDiskannIndex::VerifyAllocations(IndexLock &state) {
@@ -376,55 +351,80 @@ idx_t LMDiskannIndex::Scan(IndexScanState &state, Vector &result) {
 // --- Helper Method Implementations (Private to LMDiskannIndex) ---
 
 void LMDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
-     // Call storage module helper
-     metadata_ptr_ = allocator_->New();
-     graph_entry_point_ptr_.Clear();
-     graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum();
-     delete_queue_head_ptr_.Clear();
-     in_memory_rowid_map_.clear(); // Clear map for new index
-     is_dirty_ = true;
-     PersistMetadata(); // Persists internal state via storage module
+    // Create the metadata block
+    metadata_ptr_ = allocator_->();
+
+    // Initialize the delete queue head pointer as invalid
+    delete_queue_head_ptr_.Invalidate();
+
+    // Initialize the entry point pointer as invalid
+    graph_entry_point_ptr_.Invalidate();
+    graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum(); // Mark rowid as invalid too
+
+    // TODO: Initialize the RowID Map (ART)
+    // rowid_map_root_ptr_.Invalidate();
+    // auto art = make_uniq<ART>(...); // Create empty ART
+
+    // Persist initial metadata
+    LMDiskannMetadata initial_metadata;
+    initial_metadata.format_version = format_version_;
+    initial_metadata.metric_type = metric_type_;
+    initial_metadata.node_vector_type = node_vector_type_;
+    initial_metadata.dimensions = dimensions_;
+    initial_metadata.r = r_;
+    initial_metadata.l_insert = l_insert_;
+    initial_metadata.alpha = alpha_;
+    initial_metadata.l_search = l_search_;
+    initial_metadata.block_size_bytes = block_size_bytes_;
+    initial_metadata.graph_entry_point_ptr = graph_entry_point_ptr_;
+    initial_metadata.delete_queue_head_ptr = delete_queue_head_ptr_;
+    // initial_metadata.rowid_map_root_ptr = rowid_map_root_ptr_;
+
+    PersistMetadata(metadata_ptr_, db_, *allocator_, initial_metadata);
+
+    is_dirty_ = true; // Mark as dirty initially
 }
 
 void LMDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
-     // Call storage module helper
-     LoadMetadata(storage_info.GetMetadataPointer(), db_, *allocator_,
-                  format_version_, metric_type_, node_vector_type_, edge_vector_type_param_,
-                  dimensions_, r_, l_insert_, alpha_, l_search_, block_size_bytes_,
-                  graph_entry_point_ptr_, delete_queue_head_ptr_ /*, rowid_map_root_ptr_ */);
+    // metadata_ptr_ is already set from storage_info in constructor
 
-     // Post-load processing (moved from original constructor)
-     if (edge_vector_type_param_ == LMDiskannEdgeType::SAME_AS_NODE) { resolved_edge_vector_type_ = node_vector_type_; }
-     else {
-         switch(edge_vector_type_param_) {
-             case LMDiskannEdgeType::FLOAT32: resolved_edge_vector_type_ = LMDiskannVectorType::FLOAT32; break;
-             case LMDiskannEdgeType::FLOAT16: resolved_edge_vector_type_ = LMDiskannVectorType::FLOAT16; break;
-             case LMDiskannEdgeType::INT8:    resolved_edge_vector_type_ = LMDiskannVectorType::INT8; break;
-             case LMDiskannEdgeType::FLOAT1BIT: resolved_edge_vector_type_ = LMDiskannVectorType::UNKNOWN; break;
-             case LMDiskannEdgeType::TERNARY: resolved_edge_vector_type_ = LMDiskannVectorType::UNKNOWN; break; // Special type
-             default: throw InternalException("Unexpected loaded LMDiskannEdgeType parameter");
-         }
-     }
-     CalculateSizesAndLayout(); // Recalculate layout
-     // Check block size consistency
-     idx_t expected_block_size = block_size_bytes_;
-     // ... (block size check logic as before) ...
-     ValidateParameters(metric_type_, edge_vector_type_param_, r_, l_insert_, alpha_, l_search_); // Re-validate
+    LMDiskannMetadata loaded_metadata;
+    LoadMetadata(metadata_ptr_, db_, *allocator_, loaded_metadata);
 
-     // FIXME: Load RowID map from persistent storage if implemented
-     // For in-memory, we need to rebuild it by scanning allocator, which is slow.
-     // Or accept that the in-memory map is lost on reload.
-     in_memory_rowid_map_.clear();
-     Printer::Warning("In-memory RowID map is not persisted/loaded.");
+    // Validate format version if necessary
+    if (loaded_metadata.format_version != format_version_) {
+        throw IOException("LM_DISKANN index format version mismatch: Found %d, expected %d",
+                        loaded_metadata.format_version, format_version_);
+    }
 
+    // Load parameters from metadata struct into member variables
+    // (Could add validation checks here too, comparing against constructor-derived values if needed)
+    metric_type_ = loaded_metadata.metric_type;
+    node_vector_type_ = loaded_metadata.node_vector_type;
+    dimensions_ = loaded_metadata.dimensions;
+    r_ = loaded_metadata.r;
+    l_insert_ = loaded_metadata.l_insert;
+    alpha_ = loaded_metadata.alpha;
+    l_search_ = loaded_metadata.l_search;
+    block_size_bytes_ = loaded_metadata.block_size_bytes;
+    graph_entry_point_ptr_ = loaded_metadata.graph_entry_point_ptr;
+    delete_queue_head_ptr_ = loaded_metadata.delete_queue_head_ptr;
+    // rowid_map_root_ptr_ = loaded_metadata.rowid_map_root_ptr; // Load ART root
 
-     // Get entry point rowid if pointer is valid
-     if (graph_entry_point_ptr_.IsValid()) {
-         // FIXME: Need inverse mapping from IndexPointer to row_id
-         graph_entry_point_rowid_ = -2; // Placeholder
-     } else { graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum(); }
+    // Recalculate layout based on loaded parameters (important!)
+    CalculateLayoutInternal();
 
-     is_dirty_ = false;
+    // TODO: Load the RowID Map (ART) using the loaded root pointer
+    // auto art = make_uniq<ART>(db_, ..., rowid_map_root_ptr_);
+
+    // Load entry point rowid (if pointer is valid)
+    if (graph_entry_point_ptr_.IsValid()) {
+        graph_entry_point_rowid_ = GetEntryPointRowId(graph_entry_point_ptr_, db_, *allocator_);
+    } else {
+        graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum();
+    }
+
+    is_dirty_ = false; // Loaded state is not dirty initially
 }
 
 void LMDiskannIndex::PersistMetadata() {
@@ -436,36 +436,6 @@ void LMDiskannIndex::PersistMetadata() {
                              graph_entry_point_ptr_, delete_queue_head_ptr_ /*, rowid_map_root_ptr_ */);
      is_dirty_ = false;
 }
-
-// Wrapper for distance calculation using index state
-template <typename T_A, typename T_B>
-float LMDiskannIndex::CalculateDistance(const T_A *vec_a, const T_B *vec_b) {
-    // Delegate to distance module function
-    // Determine types based on template arguments
-    LMDiskannVectorType type_a = LMDiskannVectorType::UNKNOWN;
-    LMDiskannVectorType type_b = LMDiskannVectorType::UNKNOWN;
-    if constexpr (std::is_same_v<T_A, float>) type_a = LMDiskannVectorType::FLOAT32;
-    else if constexpr (std::is_same_v<T_A, float16_t>) type_a = LMDiskannVectorType::FLOAT16;
-    else if constexpr (std::is_same_v<T_A, int8_t>) type_a = LMDiskannVectorType::INT8;
-
-    if constexpr (std::is_same_v<T_B, float>) type_b = LMDiskannVectorType::FLOAT32;
-    else if constexpr (std::is_same_v<T_B, float16_t>) type_b = LMDiskannVectorType::FLOAT16;
-    else if constexpr (std::is_same_v<T_B, int8_t>) type_b = LMDiskannVectorType::INT8;
-
-    if (type_a == LMDiskannVectorType::UNKNOWN || type_b == LMDiskannVectorType::UNKNOWN) {
-        throw InternalException("Unknown vector type in CalculateDistance template.");
-    }
-
-    return ComputeDistance(const_data_ptr_cast(vec_a), type_a,
-                           const_data_ptr_cast(vec_b), type_b,
-                           dimensions_, metric_type_);
-}
-// Instantiate template for float, float
-template float LMDiskannIndex::CalculateDistance<float, float>(const float*, const float*);
-// Instantiate templates needed for RobustPrune/FindAndConnectNeighbors
-template float LMDiskannIndex::CalculateDistance<float16_t, float>(const float16_t*, const float*);
-template float LMDiskannIndex::CalculateDistance<int8_t, float>(const int8_t*, const float*);
-
 
 // Wrapper for approximate distance calculation using index state
 float LMDiskannIndex::CalculateApproxDistance(const float *query_ptr, const_data_ptr_t compressed_neighbor_ptr) {
@@ -870,5 +840,83 @@ BufferHandle LMDiskannIndex::GetNodeBuffer(IndexPointer node_ptr, bool write_loc
     return buffer_manager.Pin(allocator_->GetBlock(node_ptr));
 }
 
+void LMDiskannIndex::ParseOptions(const case_insensitive_map_t<Value> &options) {
+    // Default values
+    metric_type_ = LMDiskannMetricType::COSINE;
+    node_vector_type_ = LMDiskannVectorType::FLOAT32;
+    dimensions_ = 0; // Should be overwritten by column type
+    r_ = 64;
+    l_insert_ = 128;
+    alpha_ = 1.2f;
+    l_search_ = 100;
+
+    for (const auto &entry : options) {
+        const string &key = entry.first;
+        const Value &val = entry.second;
+
+        if (key == "METRIC") {
+             metric_type_ = EnumUtil::FromString<LMDiskannMetricType>(StringUtil::Upper(val.ToString()));
+        } else if (key == "NODE_TYPE") {
+             node_vector_type_ = EnumUtil::FromString<LMDiskannVectorType>(StringUtil::Upper(val.ToString()));
+        } else if (key == "DIMENSIONS") {
+             dimensions_ = val.GetValue<idx_t>(); // Still parse, but verify against column later
+        } else if (key == "R") {
+             r_ = val.GetValue<uint32_t>();
+        } else if (key == "L_INSERT") {
+             l_insert_ = val.GetValue<uint32_t>();
+        } else if (key == "ALPHA") {
+             alpha_ = val.GetValue<float>();
+        } else if (key == "L_SEARCH") {
+             l_search_ = val.GetValue<uint32_t>();
+        } else {
+             throw BinderException("Unknown option for LM_DISKANN index: %s", key);
+        }
+    }
+}
+
+void LMDiskannIndex::ValidateParameters() {
+    // Basic range checks
+    if (dimensions_ == 0) { throw BinderException("Index DIMENSIONS must be specified or derived from column type."); }
+    if (r_ < 2) { throw BinderException("R must be at least 2."); }
+    if (l_insert_ < r_) { throw BinderException("L_INSERT must be greater than or equal to R (%u).", r_); }
+    if (alpha_ < 1.0f) { throw BinderException("ALPHA must be >= 1.0."); }
+    if (l_search_ == 0) { throw BinderException("L_SEARCH must be > 0."); }
+    // Metric validation happens after type validation in constructor
+}
+
+void LMDiskannIndex::CalculateLayoutInternal() {
+    // Calculate node vector size
+    switch(node_vector_type_) {
+        case LMDiskannVectorType::FLOAT32: node_vector_size_bytes_ = dimensions_ * sizeof(float); break;
+        case LMDiskannVectorType::INT8: node_vector_size_bytes_ = dimensions_ * sizeof(int8_t); break;
+        // case LMDiskannVectorType::FLOAT16: node_vector_size_bytes_ = dimensions_ * sizeof(float16_t); break; // If supported
+        default: throw InternalException("Unsupported node vector type for layout calculation");
+    }
+
+    // Calculate edge vector size (TERNARY)
+    // Size = ceil((2 * dimensions) / 8.0) bytes = (2 * dimensions + 7) / 8
+    edge_vector_size_bytes_ = (2 * dimensions_ + 7) / 8;
+
+    // Calculate total size before alignment
+    idx_t total_size = sizeof(uint32_t); // Neighbor count
+    total_size += node_vector_size_bytes_; // Node vector
+    total_size += r_ * sizeof(row_t); // Neighbor IDs
+    total_size += r_ * edge_vector_size_bytes_; // Compressed neighbor vectors (ternary)
+
+    // Calculate aligned block size (align to cache line? sector size?)
+    // Using 8 byte alignment for simplicity for now.
+    block_size_bytes_ = AlignValue<idx_t>(total_size, 8);
+    // Max block size check?
+
+    // Calculate offsets within the block
+    node_layout_.neighbor_count = 0;
+    node_layout_.node_vector = node_layout_.neighbor_count + sizeof(uint32_t);
+    node_layout_.neighbor_ids = node_layout_.node_vector + node_vector_size_bytes_;
+    // For ternary, we need offsets for the two planes within the edge_vector_size_bytes_ space
+    // Assuming EncodeTernary packs pos plane then neg plane
+    idx_t pos_plane_size_bytes = (dimensions_ + 7) / 8;
+    node_layout_.pos_planes = node_layout_.neighbor_ids + r_ * sizeof(row_t);
+    node_layout_.neg_planes = node_layout_.pos_planes + r_ * pos_plane_size_bytes; // Neg planes start after pos planes for all R neighbors
+}
 
 } // namespace duckdb
