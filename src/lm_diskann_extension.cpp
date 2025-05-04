@@ -8,13 +8,13 @@
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 
-#include "hnsw/hnsw.hpp"
+#include "lm_diskann/lm_diskann_index.hpp"
 
 namespace duckdb {
 
 static void LoadInternal(DatabaseInstance &instance) {
 	// Register the HNSW index module
-	HNSWModule::Register(instance);
+	LMDiskannIndex::Register(instance);
 }
 
 void LmDiskannExtension::Load(DuckDB &db) {
