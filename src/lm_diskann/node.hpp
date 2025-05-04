@@ -24,9 +24,13 @@ namespace LMDiskannNodeAccessors {
     // Returns a pointer to the start of the neighbor row_t ID array.
     const row_t* GetNeighborIDsPtr(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout);
 
-    // Returns a pointer to the start of the specified neighbor's compressed vector data.
+    // Returns a pointer to the start of the specified neighbor's positive ternary plane data.
     // Note: No bounds check here for performance; caller must ensure neighbor_idx is valid.
-    const_data_ptr_t GetCompressedNeighborPtr(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t edge_vector_size_bytes);
+    const_data_ptr_t GetPosPlanePtr(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes);
+
+    // Returns a pointer to the start of the specified neighbor's negative ternary plane data.
+    // Note: No bounds check here for performance; caller must ensure neighbor_idx is valid.
+    const_data_ptr_t GetNegPlanePtr(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes);
 
     // --- Setters (non-const version) ---
 
@@ -39,9 +43,13 @@ namespace LMDiskannNodeAccessors {
     // Returns a writable pointer to the start of the neighbor row_t ID array.
     row_t* GetNeighborIDsPtrMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout);
 
-    // Returns a writable pointer to the start of the specified neighbor's compressed vector data.
+    // Returns a writable pointer to the start of the specified neighbor's positive ternary plane data.
     // Note: No bounds check here for performance; caller must ensure neighbor_idx is valid.
-    data_ptr_t GetCompressedNeighborPtrMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t edge_vector_size_bytes);
+    data_ptr_t GetPosPlanePtrMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes);
+
+    // Returns a writable pointer to the start of the specified neighbor's negative ternary plane data.
+    // Note: No bounds check here for performance; caller must ensure neighbor_idx is valid.
+    data_ptr_t GetNegPlanePtrMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes);
 
     // --- Initialization Helper ---
 

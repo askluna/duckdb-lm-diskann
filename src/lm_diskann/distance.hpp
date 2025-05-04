@@ -3,10 +3,15 @@
 #include "duckdb.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/storage/data_pointer.hpp"
 
 #include <cstdint>
 
 namespace duckdb {
+
+// Forward declare enums if needed, or include config.hpp in the .cpp file only
+enum class LMDiskannVectorType : uint8_t;
+enum class LMDiskannMetricType : uint8_t;
 
 // --- Enums for LM-DiskANN Parameters ---
 // Defines the types for configuration options like distance metric,
@@ -94,5 +99,26 @@ idx_t GetEdgeVectorTypeSizeBytes(LMDiskannEdgeType type, LMDiskannVectorType nod
 NodeLayoutOffsets CalculateLayoutInternal(idx_t dimensions, idx_t r,
                                           idx_t node_vector_size_bytes,
                                           idx_t edge_vector_size_bytes);
+
+// Calculates distance between two full-precision vectors (potentially different types).
+// Assumes conversion to float internally for calculation.
+float ComputeDistance(const_data_ptr_t vec_a_ptr, LMDiskannVectorType type_a,
+                      const_data_ptr_t vec_b_ptr, LMDiskannVectorType type_b,
+                      idx_t dimensions, LMDiskannMetricType metric_type);
+
+
+// Calculates approximate SIMILARITY between a full query vector (float)
+// and a compressed TERNARY neighbor vector using its separate planes.
+// Returns a raw similarity score (higher is better).
+float ComputeApproxSimilarityTernary(const float *query_ptr,
+                                     const_data_ptr_t pos_plane_ptr,
+                                     const_data_ptr_t neg_plane_ptr,
+                                     idx_t dimensions, LMDiskannMetricType metric_type);
+
+// Compresses a float vector into the TERNARY format using separate pos/neg planes.
+void CompressVectorToTernary(const float* input_float_ptr,
+                             data_ptr_t dest_pos_plane_ptr,
+                             data_ptr_t dest_neg_plane_ptr,
+                             idx_t dimensions);
 
 } // namespace duckdb

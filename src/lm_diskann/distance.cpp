@@ -1,26 +1,33 @@
-
 #include "distance.hpp"
+#include "config.hpp" // Include config for enums
+#include "ternary_quantization.hpp" // For ternary encoding and kernels
+
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/vector.hpp" // For vector access if needed
+#include "duckdb/function/scalar/vector_functions.hpp" // For VectorDistance
+#include "duckdb/common/types/vector_operations/vector_operations.hpp" // For vector operations if needed directly
+#include "duckdb/common/types/value.hpp" // Might define float16_t or related types
+#include "duckdb/common/types/uhugeint.hpp" // Includes half.hpp potentially
 
 #include <vector>
 #include <cmath>
 #include <cstring> // For memcpy
+#include <type_traits> // For std::is_same
 
 namespace duckdb {
 
 // Helper to potentially convert vector data to float for calculation
 template <typename T>
 void ConvertToFloat(const T *src, float *dst, idx_t count) {
-    if constexpr (std::is_same_v<T, float>) {
+    if constexpr (std::is_same<T, float>::value) {
         if (src != dst) { // Avoid self-copy
              memcpy(dst, src, count * sizeof(float));
         }
-    } else if constexpr (std::is_same_v<T, float16_t>) {
+    } else if constexpr (std::is_same<T, float16_t>::value) {
         for (idx_t i = 0; i < count; ++i) {
             dst[i] = float16_t::ToFloat(src[i]);
         }
-    } else if constexpr (std::is_same_v<T, int8_t>) {
+    } else if constexpr (std::is_same<T, int8_t>::value) {
         // FIXME: This simple cast/scaling is likely inaccurate.
         // Proper INT8 distance needs scale/offset or specialized kernels.
         // Using this for now as a placeholder.
@@ -54,7 +61,8 @@ float ComputeDistance(const_data_ptr_t vec_a_ptr, LMDiskannVectorType type_a,
             ConvertToFloat(reinterpret_cast<const float*>(vec_a_ptr), vec_a_float.data(), dimensions);
             break;
         case LMDiskannVectorType::FLOAT16:
-            ConvertToFloat(reinterpret_cast<const float16_t*>(vec_a_ptr), vec_a_float.data(), dimensions);
+             // ConvertToFloat(reinterpret_cast<const float16_t*>(vec_a_ptr), vec_a_float.data(), dimensions);
+             throw NotImplementedException("FLOAT16 distance support pending float16_t type resolution");
             break;
         case LMDiskannVectorType::INT8:
             ConvertToFloat(reinterpret_cast<const int8_t*>(vec_a_ptr), vec_a_float.data(), dimensions);
@@ -68,7 +76,8 @@ float ComputeDistance(const_data_ptr_t vec_a_ptr, LMDiskannVectorType type_a,
             ConvertToFloat(reinterpret_cast<const float*>(vec_b_ptr), vec_b_float.data(), dimensions);
             break;
         case LMDiskannVectorType::FLOAT16:
-            ConvertToFloat(reinterpret_cast<const float16_t*>(vec_b_ptr), vec_b_float.data(), dimensions);
+            // ConvertToFloat(reinterpret_cast<const float16_t*>(vec_b_ptr), vec_b_float.data(), dimensions);
+            throw NotImplementedException("FLOAT16 distance support pending float16_t type resolution");
             break;
         case LMDiskannVectorType::INT8:
             ConvertToFloat(reinterpret_cast<const int8_t*>(vec_b_ptr), vec_b_float.data(), dimensions);
@@ -133,39 +142,60 @@ float ComputeApproxDistance(const float *query_ptr, const_data_ptr_t compressed_
 }
 
 
-// Compresses a float vector into the specified edge format.
-bool CompressVectorForEdge(const float* input_float_ptr, data_ptr_t dest_ptr,
-                           idx_t dimensions, LMDiskannVectorType resolved_edge_type) {
-     switch(resolved_edge_type) {
-         case LMDiskannVectorType::FLOAT32:
-             memcpy(dest_ptr, input_float_ptr, dimensions * sizeof(float));
-             return true;
-         case LMDiskannVectorType::FLOAT16:
-             {
-                 float16_t* dest_f16 = reinterpret_cast<float16_t*>(dest_ptr);
-                 for(idx_t i=0; i<dimensions; ++i) {
-                     dest_f16[i] = float16_t::FromFloat(input_float_ptr[i]);
-                 }
-                 return true;
-             }
-         case LMDiskannVectorType::INT8:
-             {
-                 // FIXME: Simple cast/scaling. Needs proper quantization scheme.
-                 int8_t* dest_i8 = reinterpret_cast<int8_t*>(dest_ptr);
-                 for(idx_t i=0; i<dimensions; ++i) {
-                     // Example: Scale to [-127, 127] assuming input is roughly [-1, 1]
-                     float clamped = std::max(-1.0f, std::min(1.0f, input_float_ptr[i]));
-                     dest_i8[i] = static_cast<int8_t>(clamped * 127.0f);
-                 }
-                 return true;
-             }
-         case LMDiskannVectorType::UNKNOWN: // FLOAT1BIT
-             // FIXME: Implement binarization (e.g., based on sign or threshold)
-             throw NotImplementedException("Compression to FLOAT1BIT not implemented.");
-             return false; // Unreachable
-         default:
-             return false; // Unsupported type
-     }
+// Calculates approximate SIMILARITY between a full query vector (float)
+// and a compressed TERNARY neighbor vector using its separate planes.
+// Returns a raw similarity score (higher is better).
+float ComputeApproxSimilarityTernary(const float *query_ptr,
+                                     const_data_ptr_t pos_plane_ptr,
+                                     const_data_ptr_t neg_plane_ptr,
+                                     idx_t dimensions, LMDiskannMetricType metric_type) {
+
+    // Metric validation (Ternary is only valid for COSINE or IP)
+    if (metric_type == LMDiskannMetricType::L2) {
+        throw InternalException("ComputeApproxSimilarityTernary called with L2 metric.");
+    }
+
+    // 1. Calculate size and allocate query planes
+    const size_t words_per_plane = WordsPerPlane(dimensions);
+    std::vector<uint64_t> query_pos_plane_vec(words_per_plane);
+    std::vector<uint64_t> query_neg_plane_vec(words_per_plane);
+
+    // 2. Encode the float query into ternary planes
+    EncodeTernary(query_ptr, query_pos_plane_vec.data(), query_neg_plane_vec.data(), dimensions);
+
+    // 3. Get the best available dot product kernel
+    dot_fun_t dot_kernel = GetKernel();
+
+    // 4. Call the kernel with query planes and the neighbor's stored planes
+    // Note: Need const_cast or reinterpret_cast if kernel expects non-const uint64_t*
+    int64_t raw_score = dot_kernel(
+        query_pos_plane_vec.data(),
+        query_neg_plane_vec.data(),
+        reinterpret_cast<const uint64_t*>(pos_plane_ptr),
+        reinterpret_cast<const uint64_t*>(neg_plane_ptr),
+        words_per_plane
+    );
+
+    // 5. Return the raw similarity score
+    // Higher score indicates higher similarity (closer vectors for IP/Cosine)
+    // The caller needs to handle this (e.g., negate for min-heap, flip comparisons).
+    return static_cast<float>(raw_score);
+}
+
+
+// Compresses a float vector into the TERNARY format using separate pos/neg planes.
+void CompressVectorToTernary(const float* input_float_ptr,
+                             data_ptr_t dest_pos_plane_ptr,
+                             data_ptr_t dest_neg_plane_ptr,
+                             idx_t dimensions) {
+
+     // Directly call the encoding function from ternary_quantization.hpp
+     EncodeTernary(
+         input_float_ptr,
+         reinterpret_cast<uint64_t*>(dest_pos_plane_ptr),
+         reinterpret_cast<uint64_t*>(dest_neg_plane_ptr),
+         dimensions
+     );
 }
 
 
