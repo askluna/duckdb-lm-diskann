@@ -37,12 +37,18 @@ struct LMDiskannScanState : public IndexScanState {
 
     // Constructor
     LMDiskannScanState(const Vector &query, idx_t k_value, uint32_t l_search_value)
-        : query_vector_handle(query), k(k_value), l_search(l_search_value) {
+        : query_vector_handle(query.GetType()),
+          k(k_value),
+          l_search(l_search_value) {
             // Assuming query is always FLOAT for now
             if (query.GetType().id() != LogicalTypeId::ARRAY ||
                 ArrayType::GetChildType(query.GetType()).id() != LogicalTypeId::FLOAT) {
                 throw BinderException("LMDiskannScanState: Query vector must be ARRAY<FLOAT>.");
             }
+
+            // Use Reference() to make the initialized handle refer to the input query's data
+            query_vector_handle.Reference(query);
+
             // Ensure the query vector is flattened for direct access
             query_vector_handle.Flatten(1); // Assuming query is a single vector
             query_vector_ptr = FlatVector::GetData<float>(query_vector_handle);
