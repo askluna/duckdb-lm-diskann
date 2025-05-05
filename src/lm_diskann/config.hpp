@@ -9,6 +9,7 @@
 
 namespace duckdb {
 
+
 // --- Enums for LM-DiskANN Parameters ---
 // Defines the types for configuration options like distance metric,
 // vector storage types (for nodes).
@@ -55,6 +56,7 @@ struct LmDiskannConfigDefaults {
 // Format version (separate from parameter defaults)
 inline constexpr uint8_t LMDISKANN_CURRENT_FORMAT_VERSION = 3;
 
+
 // --- Configuration Struct ---
 struct LMDiskannConfig {
     // Parameters parsed from options
@@ -84,6 +86,33 @@ struct NodeLayoutOffsets {
     idx_t neighbor_neg_planes_offset = 0; // Offset of the start of the negative ternary planes array
     idx_t total_node_size = 0;     // Total size *before* final block alignment (used for allocation/memcpy)
 };
+
+
+//! Non-owning view of constant ternary bit planes.
+struct TernaryPlanesView {
+    const_data_ptr_t positive_plane = nullptr;
+    const_data_ptr_t negative_plane = nullptr;
+    idx_t words_per_plane = 0; // Pre-calculated size based on dimensions
+
+    // Basic validity check
+    bool IsValid() const {
+        return positive_plane != nullptr && negative_plane != nullptr && words_per_plane > 0;
+    }
+};
+
+//! Non-owning view of mutable ternary bit planes.
+struct MutableTernaryPlanesView {
+    data_ptr_t positive_plane = nullptr;
+    data_ptr_t negative_plane = nullptr;
+    idx_t words_per_plane = 0; // Pre-calculated size based on dimensions
+
+    // Basic validity check
+    bool IsValid() const {
+        return positive_plane != nullptr && negative_plane != nullptr && words_per_plane > 0;
+    }
+};
+
+
 
 
 // --- Configuration Functions ---

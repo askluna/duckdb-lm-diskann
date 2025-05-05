@@ -1,5 +1,6 @@
 #include "distance.hpp"
-#include "ternary_quantization.hpp" // For EncodeTernary, GetKernel, WordsPerPlane
+#include "ternary_quantization.hpp" // For EncodeTernary, GetKernel
+
 // #include "config.hpp" // No longer needed here, included via distance.hpp indirectly or types are forward declared
 
 #include "duckdb/common/exception.hpp"
@@ -17,22 +18,6 @@
 
 
 namespace duckdb {
-
-// --- Configuration Constants Definitions (matching declarations in config.hpp) ---
-// These need definitions somewhere, maybe config.cpp is better?
-// Putting them here for now, but consider moving.
-const char *LMDISKANN_METRIC_OPTION = "metric";
-const char *LMDISKANN_R_OPTION = "R";
-const char *LMDISKANN_L_INSERT_OPTION = "L_insert";
-const char *LMDISKANN_ALPHA_OPTION = "alpha";
-const char *LMDISKANN_L_SEARCH_OPTION = "L_search";
-
-const LMDiskannMetricType LMDISKANN_DEFAULT_METRIC = LMDiskannMetricType::L2;
-const uint32_t LMDISKANN_DEFAULT_R = 64;
-const uint32_t LMDISKANN_DEFAULT_L_INSERT = 256;
-const float LMDISKANN_DEFAULT_ALPHA = 1.2f;
-const uint32_t LMDISKANN_DEFAULT_L_SEARCH = 100; // Needs tuning
-const uint8_t LMDISKANN_CURRENT_FORMAT_VERSION = 1;
 
 
 // --- Core Function Implementations ---
