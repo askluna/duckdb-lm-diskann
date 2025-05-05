@@ -1,4 +1,6 @@
+
 #include "distance.hpp"
+
 #include "ternary_quantization.hpp" // For EncodeTernary, GetKernel
 
 // #include "config.hpp" // No longer needed here, included via distance.hpp indirectly or types are forward declared
@@ -129,17 +131,17 @@ void ParseOptions(const case_insensitive_map_t<Value> &options,
                   uint32_t &r, uint32_t &l_insert,
                   float &alpha, uint32_t &l_search) {
 
-    metric_type = LMDISKANN_DEFAULT_METRIC;
-    r = LMDISKANN_DEFAULT_R;
-    l_insert = LMDISKANN_DEFAULT_L_INSERT;
-    alpha = LMDISKANN_DEFAULT_ALPHA;
-    l_search = LMDISKANN_DEFAULT_L_SEARCH;
+    metric_type = LmDiskannConfigDefaults::METRIC;
+    r = LmDiskannConfigDefaults::R;
+    l_insert = LmDiskannConfigDefaults::L_INSERT;
+    alpha = LmDiskannConfigDefaults::ALPHA;
+    l_search = LmDiskannConfigDefaults::L_SEARCH;
 
     for (const auto &kv : options) {
         auto loption = StringUtil::Lower(kv.first);
         const auto &value = kv.second;
 
-        if (loption == LMDISKANN_METRIC_OPTION) {
+        if (loption == LmDiskannOptionKeys::METRIC) {
             auto metric_str = StringUtil::Lower(value.ToString());
             if (metric_str == "l2") {
                 metric_type = LMDiskannMetricType::L2;
@@ -151,13 +153,13 @@ void ParseOptions(const case_insensitive_map_t<Value> &options,
                 // Use base Exception as specific types (BinderException, ParserException) couldn't be found.
                 throw Exception(ExceptionType::INVALID_INPUT, StringUtil::Format("Unknown LM-DiskANN metric type: '%s'. Options are l2, cosine, ip", value.ToString()));
             }
-        } else if (loption == LMDISKANN_R_OPTION) {
+        } else if (loption == LmDiskannOptionKeys::R) {
             r = value.GetValue<uint32_t>();
-        } else if (loption == LMDISKANN_L_INSERT_OPTION) {
+        } else if (loption == LmDiskannOptionKeys::L_INSERT) {
             l_insert = value.GetValue<uint32_t>();
-        } else if (loption == LMDISKANN_ALPHA_OPTION) {
+        } else if (loption == LmDiskannOptionKeys::ALPHA) {
             alpha = value.GetValue<float>();
-        } else if (loption == LMDISKANN_L_SEARCH_OPTION) {
+        } else if (loption == LmDiskannOptionKeys::L_SEARCH) {
             l_search = value.GetValue<uint32_t>();
         } else {
              // Use base Exception
