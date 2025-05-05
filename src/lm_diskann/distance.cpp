@@ -93,7 +93,7 @@ float ComputeApproxSimilarityTernary(const float *query_float_ptr,
     EncodeTernary(query_float_ptr, query_pos_plane_vec.data(), query_neg_plane_vec.data(), dimensions);
 
     // 2. Get the appropriate SIMD kernel
-    dot_fun_t dot_kernel = GetKernel();
+    dot_fun_t dot_kernel = GetDotKernel();
 
     // 3. Compute the raw ternary dot product score
     // Extract raw pointers from the view struct

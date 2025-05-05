@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb/common/common.hpp" // For idx_t?
+#include "config.hpp" // Include for TernaryPlaneBatchView
 #include <vector> // For std::vector
 #include <utility> // For std::pair
 #include <cstdint> // For uint64_t
@@ -19,16 +20,14 @@ struct LMDiskannScanState; // Forward declare scan state struct
 // - find_exact_distances: If true, calculates exact distances for top candidates found.
 void PerformSearch(LMDiskannScanState &scan_state, LMDiskannIndex &index, bool find_exact_distances);
 
-//! Performs a Top-K nearest neighbor search using ternary encoded vectors.
-//! Assumes plane_data pointers point to contiguous blocks of encoded vectors.
+//! Performs a Top-K nearest neighbor search using a batch of ternary encoded vectors.
+//! Uses the provided batch view to access contiguous plane data.
 //! Note: Moved from ternary_quantization.hpp
 void TopKTernarySearch(const float* query,
-                       const uint64_t* posPlaneData, // Pointer to concatenated positive planes
-                       const uint64_t* negPlaneData, // Pointer to concatenated negative planes
-                       size_t N,                 // Number of database vectors in planeData
-                       size_t dims,              // Original vector dimension
-                       size_t K,                 // Number of neighbors to find
-                       const uint64_t* neighIDs, // IDs corresponding to vectors in planeData
+                       size_t dims,                  // Query vector dimension (for encoding query)
+                       const TernaryPlaneBatchView& database_batch, // Batch of DB vectors
+                       size_t K,                     // Number of neighbors to find
+                       const uint64_t* neighIDs,     // IDs corresponding to vectors in database_batch
                        std::vector<std::pair<float, uint64_t>>& out); // Output: pairs of <similarity_score, ID>
 
 } // namespace duckdb

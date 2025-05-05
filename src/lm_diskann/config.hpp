@@ -91,7 +91,8 @@ struct NodeLayoutOffsets {
 //! Non-owning view of constant ternary bit planes.
 struct TernaryPlanesView {
     const_data_ptr_t positive_plane = nullptr;
-    const_data_ptr_t negative_plane = nullptr;
+	const_data_ptr_t negative_plane = nullptr;
+	idx_t dimensions = 0;
     idx_t words_per_plane = 0; // Pre-calculated size based on dimensions
 
     // Basic validity check
@@ -103,12 +104,30 @@ struct TernaryPlanesView {
 //! Non-owning view of mutable ternary bit planes.
 struct MutableTernaryPlanesView {
     data_ptr_t positive_plane = nullptr;
-    data_ptr_t negative_plane = nullptr;
+	data_ptr_t negative_plane = nullptr;
+	idx_t dimensions = 0;
     idx_t words_per_plane = 0; // Pre-calculated size based on dimensions
 
     // Basic validity check
     bool IsValid() const {
         return positive_plane != nullptr && negative_plane != nullptr && words_per_plane > 0;
+    }
+};
+
+//! Non-owning view of a batch of contiguous ternary bit planes.
+//! Used to describe the layout of pre-encoded database vectors for search.
+struct TernaryPlaneBatchView {
+    const uint64_t* positive_planes_start = nullptr; //!< Pointer to the start of ALL positive planes
+    const uint64_t* negative_planes_start = nullptr; //!< Pointer to the start of ALL negative planes
+    size_t num_vectors = 0;                          //!< Number of vectors (N) in the batch
+    size_t words_per_plane = 0;                      //!< Pre-calculated words per single plane (from WordsPerPlane(dims))
+
+    //! Basic validity check
+    bool IsValid() const {
+        return positive_planes_start != nullptr &&
+               negative_planes_start != nullptr &&
+               num_vectors > 0 &&
+               words_per_plane > 0;
     }
 };
 

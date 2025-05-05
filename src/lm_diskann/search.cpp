@@ -191,138 +191,96 @@ void PerformSearch(LMDiskannScanState &scan_state, LMDiskannIndex &index, bool f
 //--------------------------------------------------------------------
 
 /**
- * @brief Performs a Top-K nearest neighbor search using ternary encoded vectors.
- *
- * @param query Pointer to the original floating-point query vector.
- * @param posPlaneData Pointer to the start of the concatenated positive bit-planes
- * for all N database vectors. Data is assumed to be laid out
- * contiguously: [vec0_pos_plane, vec1_pos_plane, ...].
- * @param negPlaneData Pointer to the start of the concatenated negative bit-planes
- * for all N database vectors, laid out similarly.
- * @param N The total number of database vectors represented in the plane data.
- * @param dims The original dimensionality of the vectors.
- * @param K The number of nearest neighbors to retrieve.
- * @param neighIDs Pointer to an array of uint64_t IDs corresponding to the vectors
- * in posPlaneData/negPlaneData (must have size N). The ID at index `i`
- * corresponds to the vector whose planes start at `posPlaneData + i * words`.
- * @param[out] out A std::vector of std::pair<float, uint64_t> which will be filled
- * with the top K results, sorted by score (highest score first).
- * The pair contains (similarity_score, neighbor_ID).
- *
- * @details
- * 1. Encodes the floating-point query vector into its ternary bit-planes.
- * 2. Selects the fastest available ternary dot product kernel (using GetKernel).
- * 3. Iterates through the N database vectors:
- * a. Calculates the pointers to the current database vector's bit-planes.
- * b. Computes the raw ternary dot product score using the selected kernel.
- * c. Normalizes the raw score (divides by dims) as a proxy for similarity.
- * d. Maintains a min-priority queue (min-heap) of size K to keep track of the
- * current top K candidates based on the normalized score.
- * 4. Extracts the results from the priority queue into the output vector, sorted
- * from highest score to lowest score.
- */
+  * @brief Performs a Top-K nearest neighbor search using a batch of ternary encoded vectors.
+  *
+  * @param query Pointer to the original floating-point query vector.
+  * @param dims The original dimensionality of the query vector (used for encoding).
+  * @param database_batch A view describing the batch of pre-encoded database vectors.
+  * @param K The number of nearest neighbors to retrieve.
+  * @param neighIDs Pointer to an array of uint64_t IDs corresponding to the vectors
+  *                 in the database_batch.
+  * @param[out] out A std::vector of std::pair<float, uint64_t> which will be filled
+  *                 with the top K results, sorted by score (highest score first).
+  *                 The pair contains (similarity_score, neighbor_ID).
+  *
+  * @details (Remains largely the same)
+  * 1. Encodes the floating-point query vector into its ternary bit-planes using 'dims'.
+  * 2. Selects the fastest available ternary dot product kernel.
+  * 3. Iterates through the N database vectors described by 'database_batch':
+  *    a. Calculates pointers to the current database vector's bit-planes using offsets.
+  *    b. Computes the raw ternary dot product score.
+  *    c. Normalizes the score using 'dims'.
+  *    d. Maintains a min-priority queue (min-heap) of size K.
+  * 4. Extracts results.
+  */
 inline void TopKTernarySearch(const float* query,
-                              const uint64_t* posPlaneData,
-                              const uint64_t* negPlaneData,
-                              size_t N,                 // Number of database vectors
-                              size_t dims,              // Original vector dimension
-                              size_t K,                 // Number of neighbors to find
-                              const uint64_t* neighIDs, // IDs for database vectors
+                              size_t dims,                  // Query vector dimension
+                              const TernaryPlaneBatchView& database_batch, // Batch of DB vectors
+                              size_t K,                     // Number of neighbors to find
+                              const uint64_t* neighIDs,     // IDs for database vectors
                               std::vector<std::pair<float, uint64_t>>& out) // Output vector
 {
     // --- Input Validation ---
+    // Extract N from the batch view for checks
+    size_t N = database_batch.num_vectors;
+
     assert(query != nullptr && "Query vector pointer cannot be null");
-    assert(posPlaneData != nullptr && "Positive plane data pointer cannot be null");
-    assert(negPlaneData != nullptr && "Negative plane data pointer cannot be null");
+    assert(database_batch.IsValid() && "Database batch view is invalid");
     assert(neighIDs != nullptr && "Neighbor IDs pointer cannot be null");
-    assert(dims > 0 && "Dimensions must be positive");
+    assert(dims > 0 && "Query dimensions must be positive");
     assert(K > 0 && "K must be greater than 0");
+    // Optional: Check consistency between dims and words_per_plane?
+    // assert(database_batch.words_per_plane == WordsPerPlane(dims) && "Dimension mismatch");
 
-    // Handle edge case: No database vectors to search.
-    if (N == 0) {
-        out.clear(); // Ensure output is empty
-        return;
-    }
-    // Handle edge case: K is larger than the number of database vectors.
-    K = std::min(K, N);
-    if (K == 0) { // If K became 0 after std::min (e.g., K was initially 0 or N was 0)
-        out.clear();
-        return;
-    }
-
+    out.clear(); // Clear output vector initially
+    if (N == 0) return; // Handle empty database
+    K = std::min(K, N); // Adjust K if larger than database size
+    if (K == 0) return;
 
     // --- Preparation ---
-    // Calculate the number of 64-bit words per vector plane.
-    const size_t words_per_vector = WordsPerPlane(dims);
+    // Extract batch properties from the view
+    const uint64_t* posPlaneData = database_batch.positive_planes_start;
+    const uint64_t* negPlaneData = database_batch.negative_planes_start;
+    const size_t words_per_vector = database_batch.words_per_plane;
 
-    // Allocate temporary buffers for the encoded query vector's planes.
-    // Using std::vector ensures proper memory management.
+    // Allocate temporary buffers for the encoded query vector's planes (using query dims)
     std::vector<uint64_t> query_pos_plane_vec(words_per_vector);
     std::vector<uint64_t> query_neg_plane_vec(words_per_vector);
-
-    // Encode the float query vector into the temporary ternary planes.
     EncodeTernary(query, query_pos_plane_vec.data(), query_neg_plane_vec.data(), dims);
-    // Get pointers to the encoded query data for passing to the kernel.
     const uint64_t* qp = query_pos_plane_vec.data();
     const uint64_t* qn = query_neg_plane_vec.data();
 
-    // Get the best available dot product kernel function pointer.
-    dot_fun_t dot_kernel = GetKernel();
+    dot_fun_t dot_kernel = GetDotKernel();
 
-    // Define the type for score-ID pairs.
     using ScoreIdPair = std::pair<float, uint64_t>;
-
-    // Define a custom comparator for the priority queue to make it a *min-heap*
-    // based on the score (the float element of the pair).
-    // `a > b` means `a` has lower priority (larger score goes deeper in min-heap).
     auto min_heap_comparator = [](const ScoreIdPair& a, const ScoreIdPair& b) {
         return a.first > b.first; // Smallest score has highest priority (at the top)
     };
-
-    // Create the min-priority queue. It will store at most K elements.
-    std::priority_queue<ScoreIdPair, std::vector<ScoreIdPair>, decltype(min_heap_comparator)>
-        min_heap(min_heap_comparator);
+    std::priority_queue<ScoreIdPair, std::vector<ScoreIdPair>, decltype(min_heap_comparator)> min_heap(min_heap_comparator);
 
     // --- Search Loop ---
-    // Iterate through each database vector.
-    for(size_t idx = 0; idx < N; ++idx){
-        // Calculate pointers to the start of the current database vector's planes.
+    for(size_t idx = 0; idx < N; ++idx){ // Use N from batch view
         const uint64_t* current_vpos = posPlaneData + idx * words_per_vector;
         const uint64_t* current_vneg = negPlaneData + idx * words_per_vector;
-
-        // Compute the raw ternary dot product score using the selected kernel.
         int64_t raw_score = dot_kernel(qp, qn, current_vpos, current_vneg, words_per_vector);
 
-        // Normalize the raw score. Dividing by dims provides a rough measure of
-        // similarity per dimension, ranging approximately from -1.0 to +1.0.
-        // This is NOT cosine similarity, but serves as a ranking score.
-        // Avoid division by zero if dims is somehow 0 (though asserted earlier).
+        // Normalize score using query dimensions
         float normalized_score = (dims > 0)
                                ? static_cast<float>(raw_score) / static_cast<float>(dims)
                                : 0.0f;
 
         // --- Update Top-K Heap ---
-        // If the heap isn't full yet (has less than K elements), add the current result.
         if (min_heap.size() < K){
             min_heap.emplace(normalized_score, neighIDs[idx]);
+        } else if (normalized_score > min_heap.top().first){
+            min_heap.pop();
+            min_heap.emplace(normalized_score, neighIDs[idx]);
         }
-        // If the heap is full, check if the current score is better (higher) than
-        // the worst score currently in the heap (which is at the top of the min-heap).
-        else if (normalized_score > min_heap.top().first){
-            min_heap.pop(); // Remove the element with the lowest score.
-            min_heap.emplace(normalized_score, neighIDs[idx]); // Add the new, better element.
-        }
-        // Otherwise (current score is not better than the worst in the heap), do nothing.
     }
 
     // --- Result Extraction ---
-    // The min-heap now contains the top K results, but ordered with the lowest score
-    // at the top. We need to extract them into the output vector sorted highest-to-lowest.
-    size_t result_count = min_heap.size(); // Should be equal to K unless N < K
+    size_t result_count = min_heap.size();
     out.resize(result_count);
-
-    // Pop elements from the min-heap (smallest score first) and place them
-    // into the output vector from back to front to achieve descending score order.
     for (size_t i = 0; i < result_count; ++i) {
         out[result_count - 1 - i] = min_heap.top();
         min_heap.pop();

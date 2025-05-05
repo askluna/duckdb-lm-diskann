@@ -553,7 +553,7 @@ static dot_fun_t ResolveKernel() {
  * @details Calls ResolveKernel() once on the first call and caches the result
  * in a static variable for subsequent calls (thread-safe since C++11).
  */
-inline dot_fun_t GetKernel(){
+inline dot_fun_t GetDotKernel(){
     // Static local variable initialization is thread-safe in C++11 and later.
     static dot_fun_t resolved_kernel_function = ResolveKernel();
     return resolved_kernel_function;
