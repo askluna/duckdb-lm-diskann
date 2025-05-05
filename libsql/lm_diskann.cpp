@@ -68,8 +68,8 @@ idx_t LMDiskannIndex::GetVectorTypeSizeBytes(LMDiskannVectorType type) {
         return sizeof(float);
     case LMDiskannVectorType::INT8:
         return sizeof(int8_t);
-    case LMDiskannVectorType::FLOAT16:
-        return sizeof(float16_t); // DuckDB's half-float type
+    // case LMDiskannVectorType::FLOAT16:
+    //     return sizeof(float16_t); // DuckDB's half-float type
     default:
         throw InternalException("Unsupported LMDiskannVectorType for size calculation");
     }
@@ -208,10 +208,10 @@ LMDiskannIndex::LMDiskannIndex(const string &name, IndexConstraintType index_con
     case LogicalTypeId::TINYINT: // Assuming TINYINT maps to INT8
         node_vector_type_ = LMDiskannVectorType::INT8;
         break;
-    case LogicalTypeId::FLOAT16: // Assuming DuckDB uses FLOAT16 type ID
-        node_vector_type_ = LMDiskannVectorType::FLOAT16;
-        break;
-        // Add cases for SMALLINT -> INT16 etc. if needed
+    // case LogicalTypeId::FLOAT16: // Assuming DuckDB uses FLOAT16 type ID
+    //     node_vector_type_ = LMDiskannVectorType::FLOAT16;
+    //     break;
+    //     // Add cases for SMALLINT -> INT16 etc. if needed
     default:
         throw BinderException("Unsupported vector type for LM_DISKANN index: %s. Supported types: FLOAT[], TINYINT[], FLOAT16[]", vector_child_type.ToString());
     }
