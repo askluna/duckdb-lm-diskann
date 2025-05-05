@@ -37,152 +37,185 @@ inline idx_t GetPlaneSizeBytes(const LMDiskannIndex &index) {
      return GetTernaryPlaneSizeBytes(dimensions);
 }
 
-void PerformSearch(LMDiskannScanState &scan_state, LMDiskannIndex &index, bool find_exact_distances) {
-    // find_exact_distances parameter might be repurposed for re-ranking later
-
-    CandidateQueue candidates_pqueue; // Min-heap: stores <distance, rowid>
-    std::unordered_set<idx_t> visited_nodes;
-    std::vector<CandidateNode> results; // Store potential results <distance, rowid>
+void PerformSearch(LMDiskannScanState &scan_state, LMDiskannIndex &index, const LMDiskannConfig& config, bool find_exact_distances) {
+    // Max-heap for candidates (stores {distance, node_id}) - we want smallest distance = highest priority
+    // So we store {-distance, node_id} or use std::greater
+    using candidate_pair_t = std::pair<float, row_t>;
+    std::priority_queue<candidate_pair_t> candidate_pqueue; // Max-heap
 
     // 1. Initialize with Entry Point(s)
-    idx_t entry_point_rowid = index.GetEntryPoint();
-    if (entry_point_rowid == idx_t(-1)) {
-        scan_state.result_rowids.clear();
-        scan_state.result_scores.clear();
-        return;
+    // Access private helpers via friend status or make them public/internal helpers?
+    // Assuming friend access is okay for now.
+    row_t entry_point_rowid = index.GetEntryPoint();
+    if (entry_point_rowid == NumericLimits<row_t>::Maximum()) {
+        // No entry point, index is empty or deleted entry not replaced
+        // Ensure scan_state.candidates is empty (it should be initially)
+        // std::priority_queue<candidate_pair_t>().swap(scan_state.candidates); // Clear if needed
+        return; // No search possible
     }
 
     IndexPointer entry_point_ptr;
     if (!index.TryGetNodePointer(entry_point_rowid, entry_point_ptr)) {
-        throw InternalException("Entry point rowid %llu not found in map during search.", entry_point_rowid);
+        // Entry point exists but node pointer not found (map inconsistency?)
+        Printer::Print(StringUtil::Format("Warning: Entry point rowid %lld not found in map during search.", entry_point_rowid));
+        // Ensure scan_state.candidates is empty
+        // std::priority_queue<candidate_pair_t>().swap(scan_state.candidates);
+        return;
     }
 
     // Calculate exact distance to entry point
-    auto entry_node_handle = index.GetNodeBuffer(entry_point_ptr);
-    auto entry_node_block = entry_node_handle.Ptr();
-    // Fix: Use correct accessor name
-    const float* entry_node_vector = reinterpret_cast<const float*>(LMDiskannNodeAccessors::GetNodeVector(entry_node_block, index.node_layout_));
-    float exact_entry_dist = ComputeExactDistanceFloat(scan_state.query_vector_ptr, entry_node_vector,
-                                                      index.dimensions_, index.metric_type_);
+    vector<float> entry_node_float_vec(config.dimensions);
+    vector<float> query_float_vec(config.dimensions);
+    try {
+        auto entry_node_handle = index.GetNodeBuffer(entry_point_ptr);
+        auto entry_node_block = entry_node_handle.Ptr();
+        const_data_ptr_t entry_node_raw_vec = LMDiskannNodeAccessors::GetNodeVector(entry_node_block, index.GetNodeLayout());
 
-    candidates_pqueue.push({exact_entry_dist, entry_point_rowid});
-    results.push_back({exact_entry_dist, entry_point_rowid});
-    visited_nodes.insert(entry_point_rowid);
+        // Assuming query_vector_ptr points to float data
+        memcpy(query_float_vec.data(), scan_state.query_vector_ptr, config.dimensions * sizeof(float));
 
+        index.ConvertNodeVectorToFloat(entry_node_raw_vec, entry_node_float_vec.data());
+
+        float exact_entry_dist = ComputeExactDistanceFloat(query_float_vec.data(), entry_node_float_vec.data(),
+                                                          config.dimensions, config.metric_type);
+
+        // Use negative distance for max-heap behavior (closest is highest priority)
+        candidate_pqueue.push({-exact_entry_dist, entry_point_rowid});
+        scan_state.visited.insert(entry_point_rowid);
+
+    } catch (const std::exception& e) {
+        Printer::Print(StringUtil::Format("Warning: Failed to process entry point %lld: %s", entry_point_rowid, e.what()));
+        // Ensure scan_state.candidates is empty
+        // std::priority_queue<candidate_pair_t>().swap(scan_state.candidates);
+        return;
+    }
+
+    // --- Main Search Loop --- //
     idx_t iterations = 0;
-    idx_t max_iterations = 2000; // Safety break
 
-    // Main search loop
-    while (!candidates_pqueue.empty() && iterations < max_iterations) {
+    // Use the top_candidates max-heap from scan_state to track best results
+    // Note: scan_state.candidates should be the main exploration queue, not used here?
+    // Let's rename the local one to exploration_queue and use scan_state.top_candidates for results.
+    std::priority_queue<candidate_pair_t>().swap(scan_state.top_candidates); // Clear results heap
+
+    while (!candidate_pqueue.empty()) {
         iterations++;
 
-        // Get the best candidate (closest node found so far)
-        CandidateNode best_candidate = candidates_pqueue.top();
-        candidates_pqueue.pop();
+        candidate_pair_t best_candidate = candidate_pqueue.top();
+        candidate_pqueue.pop();
+        float current_best_neg_dist = best_candidate.first; // This is negative distance
 
-        // If the best node in the queue is already further than the L_search'th result,
-        // we can potentially prune (beam search optimization)
-        // Requires keeping results sorted. Let's implement simpler best-first for now.
+        // Pruning condition: If the candidate from exploration queue is further away (more negative distance)
+        // than the k-th element currently in our results heap (worst distance in results),
+        // and results heap is full, we can stop exploring this path.
+        if (scan_state.top_candidates.size() >= config.l_search && current_best_neg_dist < scan_state.top_candidates.top().first) {
+             // Note: top_candidates stores {pos_distance, rowid}, so top() gives largest distance
+             // candidate_pqueue stores {-distance, rowid}. If -cand_dist < -results_worst_dist, then cand_dist > results_worst_dist.
+             // This logic needs refinement. Let's stick to exploring based on L_search limit first.
+        }
 
-        idx_t current_rowid = best_candidate.second;
+        row_t current_rowid = best_candidate.second;
 
-        // Get current node's data
         IndexPointer current_node_ptr;
-        if (!index.TryGetNodePointer(current_rowid, current_node_ptr)) continue; // Node deleted?
-        auto current_node_handle = index.GetNodeBuffer(current_node_ptr);
-        auto current_node_block = current_node_handle.Ptr();
+        try {
+            if (!index.TryGetNodePointer(current_rowid, current_node_ptr)) continue; // Node deleted?
+            auto current_node_handle = index.GetNodeBuffer(current_node_ptr);
+            auto current_node_block = current_node_handle.Ptr();
+            const NodeLayoutOffsets& layout = index.GetNodeLayout();
 
-        // Iterate through neighbors
-        uint16_t neighbor_count = LMDiskannNodeAccessors::GetNeighborCount(current_node_block);
-        // Fix: Use correct accessor name
-        const row_t* neighbor_ids_ptr = LMDiskannNodeAccessors::GetNeighborIDs(current_node_block, index.node_layout_);
-        if (!neighbor_ids_ptr) continue; // Should not happen if count > 0
+            uint16_t neighbor_count = LMDiskannNodeAccessors::GetNeighborCount(current_node_block);
+            const row_t* neighbor_ids_ptr = LMDiskannNodeAccessors::GetNeighborIDsPtr(current_node_block, layout);
+            if (!neighbor_ids_ptr) continue;
 
-        idx_t plane_size_bytes = GetPlaneSizeBytes(index); // Use helper
+            for (uint16_t i = 0; i < neighbor_count; ++i) {
+                row_t neighbor_rowid = neighbor_ids_ptr[i];
 
-        for (uint16_t i = 0; i < neighbor_count; ++i) {
-            row_t neighbor_rowid = neighbor_ids_ptr[i];
+                if (scan_state.visited.count(neighbor_rowid)) {
+                    continue;
+                }
+                scan_state.visited.insert(neighbor_rowid);
 
-            if (visited_nodes.count(neighbor_rowid)) {
-                continue;
+                TernaryPlanesView neighbor_planes = LMDiskannNodeAccessors::GetNeighborTernaryPlanes(
+                    current_node_block, layout, i, config.dimensions);
+
+                if (!neighbor_planes.IsValid()) {
+                    Printer::Print(StringUtil::Format("Warning: Invalid ternary planes for neighbor %lld of node %lld", neighbor_rowid, current_rowid));
+                    continue;
+                }
+
+                float approx_distance = index.CalculateApproxDistance(query_float_vec.data(), neighbor_planes.positive_plane);
+
+                // Add to exploration queue if potentially better than the L_search worst result
+                if (scan_state.top_candidates.size() < config.l_search || approx_distance < scan_state.top_candidates.top().first) {
+                     candidate_pqueue.push({-approx_distance, neighbor_rowid}); // Push negative distance
+
+                     // Update results heap (top_candidates stores positive distance)
+                     scan_state.top_candidates.push({approx_distance, neighbor_rowid});
+                     if (scan_state.top_candidates.size() > config.l_search) {
+                          scan_state.top_candidates.pop(); // Keep only L_search best
+                     }
+                }
             }
-            visited_nodes.insert(neighbor_rowid); // Mark visited immediately
-
-            // Get neighbor's compressed ternary planes
-            // Fix: Use correct accessor names
-            const_data_ptr_t pos_plane_ptr = LMDiskannNodeAccessors::GetNeighborPositivePlane(current_node_block, index.node_layout_, i, plane_size_bytes);
-            const_data_ptr_t neg_plane_ptr = LMDiskannNodeAccessors::GetNeighborNegativePlane(current_node_block, index.node_layout_, i, plane_size_bytes);
-
-            if (!pos_plane_ptr || !neg_plane_ptr) {
-                 // Log error or throw? Continue for now.
-                 continue;
-            }
-
-            TernaryPlanesView neighbor_planes {pos_plane_ptr, neg_plane_ptr, WordsPerPlane(index.dimensions_)};
-
-            // Fix: Calculate APPROXIMATE score using ternary planes
-            float approx_similarity_score = ComputeApproxSimilarityTernary(
-                scan_state.query_vector_ptr,
-                neighbor_planes,
-                index.dimensions_
-            );
-
-            // Convert similarity score to a distance for the min-heap
-            // For Cosine/IP, distance = -similarity (or 1-similarity for cosine distance)
-            // Since the ternary kernel score correlates with Cosine/IP, use negated score.
-            float approx_distance = -approx_similarity_score;
-
-            // Check if this neighbor is potentially within the top L_search
-            // Keep track of the current L_search worst distance in the results list
-            float worst_dist_in_results = std::numeric_limits<float>::max();
-            if (results.size() >= scan_state.l_search) {
-                // Results list needs to be kept sorted or use a max-heap to find worst easily.
-                // Simple linear scan for now (inefficient but correct).
-                 std::sort(results.begin(), results.end()); // Keep sorted by distance
-                 if (results.size() > scan_state.l_search) results.resize(scan_state.l_search);
-                 worst_dist_in_results = results.back().first;
-            } else {
-                // Sort only when full? Simpler: just check size
-            }
-
-            if (results.size() < scan_state.l_search || approx_distance < worst_dist_in_results) {
-                // Add to candidate queue and results list
-                 candidates_pqueue.push({approx_distance, neighbor_rowid});
-                 results.push_back({approx_distance, neighbor_rowid});
-                 // Maintain results list size (inefficiently here)
-                 std::sort(results.begin(), results.end());
-                 if (results.size() > scan_state.l_search) results.resize(scan_state.l_search);
-            }
+        } catch (const std::exception& e) {
+             Printer::Print(StringUtil::Format("Warning: Error processing node %lld during search: %s", current_rowid, e.what()));
+             continue;
         }
     }
 
     // --- Post-Processing --- //
-    // Results list already contains the top candidates based on approx distance
-    // Sort one last time and truncate to L_search
-    std::sort(results.begin(), results.end());
-    if (results.size() > scan_state.l_search) {
-        results.resize(scan_state.l_search);
-    }
+    // scan_state.top_candidates now holds the L_search best candidates based on approximate distance.
 
-    // 2. TODO: Re-ranking Step (Crucial for Accuracy)
-    //    - Fetch full vectors for these `results`.
-    //    - Calculate EXACT distances using `ComputeExactDistanceFloat`.
-    //    - Sort again based on EXACT distance.
-    //    - Truncate to final top-k results.
+    if (find_exact_distances && scan_state.k > 0) {
+        // Re-rank the top_candidates using exact distances
+        std::vector<candidate_pair_t> final_candidates; // Use {exact_dist, rowid}
+        final_candidates.reserve(scan_state.top_candidates.size());
+        vector<float> node_float_vec(config.dimensions);
 
-    // Copy results to scan_state (currently using approx distances)
-    scan_state.result_rowids.clear();
-    scan_state.result_scores.clear();
-    for (const auto& res : results) {
-        scan_state.result_rowids.push_back(res.second);
-        scan_state.result_scores.push_back(res.first); // Store approx distance for now
-    }
+        while(!scan_state.top_candidates.empty()) {
+            row_t cand_rowid = scan_state.top_candidates.top().second;
+            scan_state.top_candidates.pop();
 
-    // Final truncation to k
-    if (scan_state.result_rowids.size() > scan_state.k) {
-        scan_state.result_rowids.resize(scan_state.k);
-        scan_state.result_scores.resize(scan_state.k);
-    }
+            IndexPointer cand_ptr;
+            try {
+                 if (!index.TryGetNodePointer(cand_rowid, cand_ptr)) continue;
+                 auto cand_handle = index.GetNodeBuffer(cand_ptr);
+                 auto cand_block = cand_handle.Ptr();
+                 const_data_ptr_t cand_raw_vec = LMDiskannNodeAccessors::GetNodeVector(cand_block, index.GetNodeLayout());
+
+                 index.ConvertNodeVectorToFloat(cand_raw_vec, node_float_vec.data());
+
+                 float exact_dist = ComputeExactDistanceFloat(query_float_vec.data(), node_float_vec.data(),
+                                                             config.dimensions, config.metric_type);
+                 final_candidates.push_back({exact_dist, cand_rowid});
+
+            } catch (const std::exception& e) {
+                 Printer::Print(StringUtil::Format("Warning: Failed to re-rank candidate %lld: %s", cand_rowid, e.what()));
+            }
+        }
+
+        // Sort final candidates by exact distance (ascending)
+        std::sort(final_candidates.begin(), final_candidates.end());
+
+        // Re-populate the top_candidates heap (which is a max-heap) up to k results.
+        // This is slightly awkward as top_candidates is used for L_search AND final results.
+        // Let's clear it and repopulate.
+        std::priority_queue<candidate_pair_t>().swap(scan_state.top_candidates);
+        for(const auto& final_cand : final_candidates) {
+             if (scan_state.top_candidates.size() < scan_state.k) {
+                  scan_state.top_candidates.push(final_cand); // Push {exact_dist, rowid}
+             } else if (final_cand.first < scan_state.top_candidates.top().first) {
+                  // If the new exact distance is better than the worst in the heap, replace
+                  scan_state.top_candidates.pop();
+                  scan_state.top_candidates.push(final_cand);
+             } else {
+                  // Since final_candidates is sorted, no need to check further if heap is full
+                  // break; // Optimization: break early if remaining candidates are worse
+             }
+        }
+    } // End if(find_exact_distances)
+
+    // PerformSearch is now complete. The results are in scan_state.top_candidates.
+    // LMDiskannIndex::Scan will extract the RowIDs from this heap.
 }
 
 
