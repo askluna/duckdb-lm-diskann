@@ -201,6 +201,18 @@ idx_t GetTernaryPlaneSizeBytes(idx_t dimensions);
  */
 NodeLayoutOffsets CalculateLayoutInternal(const LMDiskannConfig &config);
 
+// --- Utility Functions (Potentially move later) ---
+
+/**
+ * @brief Helper function to convert enum LMDiskannMetricType to string
+ */
+const char* LMDiskannMetricTypeToString(LMDiskannMetricType type);
+
+/**
+ * @brief Helper function to convert enum LMDiskannVectorType to string
+ */
+const char* LMDiskannVectorTypeToString(LMDiskannVectorType type);
+
 // --- Metadata Struct --- //
 /**
  * @brief Holds all parameters persisted in the index metadata block.
