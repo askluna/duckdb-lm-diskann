@@ -1,6 +1,9 @@
 /*******************************************************************************
  * @file lm_diskann_index.cpp
  * @brief Implementation of the LMDiskannIndex class for DuckDB.
+ * @details This file contains the implementation details for managing, searching,
+ *          inserting into, and deleting from an LM-DiskANN index within DuckDB.
+ *          It interacts with DuckDB's storage and execution systems.
  ******************************************************************************/
 #include "lm_diskann_index.hpp"
 
@@ -43,6 +46,12 @@ namespace duckdb {
 // --- LMDiskannIndex Constructor --- //
 
 LMDiskannIndex::LMDiskannIndex(const string &name, IndexConstraintType index_constraint_type,
+                               /**
+                                * @brief Constructor for LMDiskannIndex.
+                                * @param name Index name.
+                                * @param index_constraint_type Type of constraint (e.g., UNIQUE).
+                                * @param column_ids Physical column IDs covered by the index.
+                                */
                                const vector<column_t> &column_ids, TableIOManager &table_io_manager,
                                const vector<unique_ptr<Expression>> &unbound_expressions,
                                AttachedDatabase &db, const case_insensitive_map_t<Value> &options,
@@ -120,6 +129,15 @@ LMDiskannIndex::~LMDiskannIndex() = default;
 
 // --- BoundIndex Method Implementations --- //
 
+/**
+ * @brief Appends a chunk of data to the index.
+ * @details Called during initial table loading or bulk insertions.
+ *          Iterates through the input chunk and calls Insert for each row.
+ * @param lock Lock protecting the index during modification.
+ * @param input DataChunk containing the vectors to append.
+ * @param row_ids Corresponding row identifiers for the vectors in the input chunk.
+ * @return ErrorData indicating success or failure.
+ */
 ErrorData LMDiskannIndex::Append(IndexLock &lock, DataChunk &input, Vector &row_ids) {
     if (input.size() == 0) {
         return ErrorData();
@@ -147,6 +165,11 @@ ErrorData LMDiskannIndex::Append(IndexLock &lock, DataChunk &input, Vector &row_
     return ErrorData();
 }
 
+/**
+ * @brief Finalizes the dropping of the index.
+ * @details Resets the allocator and clears internal pointers.
+ * @param index_lock Lock protecting the index state.
+ */
 void LMDiskannIndex::CommitDrop(IndexLock &index_lock) {
     if (db_state_.allocator) {
         db_state_.allocator->Reset();
@@ -157,6 +180,14 @@ void LMDiskannIndex::CommitDrop(IndexLock &index_lock) {
     delete_queue_head_ptr_.Clear();
 }
 
+/**
+ * @brief Deletes entries from the index based on row identifiers.
+ * @details Removes the node from the in-memory map, frees its block, adds it to the delete queue,
+ *          and potentially clears the entry point if it was deleted.
+ * @param lock Lock protecting the index during modification.
+ * @param entries DataChunk containing the vectors (ignored, deletion is by row_id).
+ * @param row_identifiers Vector of row identifiers to delete.
+ */
 void LMDiskannIndex::Delete(IndexLock &lock, DataChunk &entries, Vector &row_identifiers) {
     row_identifiers.Flatten(entries.size());
     auto row_ids_data = FlatVector::GetData<row_t>(row_identifiers);
@@ -185,6 +216,15 @@ void LMDiskannIndex::Delete(IndexLock &lock, DataChunk &entries, Vector &row_ide
     }
 }
 
+/**
+ * @brief Inserts a single vector into the index.
+ * @details Allocates a new node, converts the input vector, finds neighbors using search,
+ *          connects the new node using RobustPrune, and updates neighbors reciprocally.
+ * @param lock Lock protecting the index during modification.
+ * @param data DataChunk containing the single vector to insert.
+ * @param row_ids Vector containing the single row identifier for the vector.
+ * @return ErrorData indicating success or failure.
+ */
 ErrorData LMDiskannIndex::Insert(IndexLock &lock, DataChunk &data, Vector &row_ids) {
      if (data.size() == 0) { return ErrorData(); }
      D_ASSERT(data.size() == 1);
@@ -247,6 +287,13 @@ ErrorData LMDiskannIndex::Insert(IndexLock &lock, DataChunk &data, Vector &row_i
      }
 }
 
+/**
+ * @brief Retrieves storage information about the index.
+ * @details Used by DuckDB for checkpointing. Fills an IndexStorageInfo struct
+ *          with allocator information. Metadata pointer persistence is handled internally.
+ * @param get_buffers Flag indicating whether buffer handles are needed (ignored here).
+ * @return IndexStorageInfo containing allocator details.
+ */
 IndexStorageInfo LMDiskannIndex::GetStorageInfo(bool get_buffers) {
     IndexStorageInfo info;
     info.name = name;
@@ -260,6 +307,10 @@ IndexStorageInfo LMDiskannIndex::GetStorageInfo(bool get_buffers) {
     return info;
 }
 
+/**
+ * @brief Estimates the in-memory size of the index.
+ * @return Estimated size in bytes (allocator + map overhead).
+ */
 idx_t LMDiskannIndex::GetInMemorySize() {
     idx_t base_size = 0;
     if (db_state_.allocator) {
@@ -270,11 +321,23 @@ idx_t LMDiskannIndex::GetInMemorySize() {
     return base_size;
 }
 
+/**
+ * @brief Merges another index into this one.
+ * @warning Not implemented for LM-DiskANN.
+ * @param state Index lock.
+ * @param other_index The index to merge into this one.
+ * @return Always returns false (not implemented).
+ */
 bool LMDiskannIndex::MergeIndexes(IndexLock &state, BoundIndex &other_index) {
     throw NotImplementedException("LMDiskannIndex::MergeIndexes not implemented");
     return false;
 }
 
+/**
+ * @brief Performs vacuuming operations on the index.
+ * @details Currently a placeholder; intended to process the deletion queue.
+ * @param state Index lock.
+ */
 void LMDiskannIndex::Vacuum(IndexLock &state) {
     // FIXME: ProcessDeletionQueue needs implementation (currently placeholder in storage.hpp)
     // ProcessDeletionQueue(delete_queue_head_ptr_, db_state_.db, *db_state_.allocator, *this);
@@ -284,6 +347,12 @@ void LMDiskannIndex::Vacuum(IndexLock &state) {
     // if (db_state_.allocator) { db_state_.allocator->Vacuum(); }
 }
 
+/**
+ * @brief Verifies index integrity (placeholder) and returns a string representation.
+ * @param state Index lock.
+ * @param only_verify If true, only perform verification without generating string.
+ * @return A string describing the index state.
+ */
 string LMDiskannIndex::VerifyAndToString(IndexLock &state, const bool only_verify) {
     // TODO: Implement actual verification logic
     string result = "LMDiskannIndex [Not Verified]";
@@ -302,17 +371,37 @@ string LMDiskannIndex::VerifyAndToString(IndexLock &state, const bool only_verif
     return result;
 }
 
+/**
+ * @brief Verifies allocator allocations (placeholder).
+ * @param state Index lock.
+ */
 void LMDiskannIndex::VerifyAllocations(IndexLock &state) {
     // TODO: Check if allocator has verification method
     // if (db_state_.allocator) { db_state_.allocator->Verify(); }
 }
 
+/**
+ * @brief Generates a constraint violation message.
+ * @warning Not supported/applicable for LM-DiskANN similarity index.
+ * @param verify_type Type of verification.
+ * @param failed_index Index of the failed row.
+ * @param input Input chunk causing violation.
+ * @return Static error message.
+ */
 string LMDiskannIndex::GetConstraintViolationMessage(VerifyExistenceType verify_type, idx_t failed_index, DataChunk &input) {
     return "Constraint violation in LM_DISKANN index (Not supported)";
 }
 
 // --- Scan Method Implementations --- //
 
+/**
+ * @brief Initializes the state for an index scan (k-NN search).
+ * @param context The client context.
+ * @param query_vector The query vector (must be ARRAY<FLOAT>).
+ * @param k The number of nearest neighbors to find.
+ * @return A unique pointer to the initialized scan state.
+ * @throws BinderException if query vector type/dimension is incorrect or k is 0.
+ */
 unique_ptr<IndexScanState> LMDiskannIndex::InitializeScan(ClientContext &context, const Vector &query_vector, idx_t k) {
     if (query_vector.GetType().id() != LogicalTypeId::ARRAY || ArrayType::GetChildType(query_vector.GetType()).id() != LogicalTypeId::FLOAT) {
         throw BinderException("LM_DISKANN query vector must be ARRAY<FLOAT>.");
@@ -331,6 +420,14 @@ unique_ptr<IndexScanState> LMDiskannIndex::InitializeScan(ClientContext &context
     return std::move(scan_state);
 }
 
+/**
+ * @brief Performs one step of the index scan (beam search).
+ * @details Calls PerformSearch, extracts results from the scan state's priority queue,
+ *          sorts them, and fills the result vector with RowIDs.
+ * @param state The current LMDiskannScanState.
+ * @param result The output vector to store resulting RowIDs.
+ * @return The number of results produced in this step (up to vector size or k).
+ */
 idx_t LMDiskannIndex::Scan(IndexScanState &state, Vector &result) {
      auto &scan_state = state.Cast<LMDiskannScanState>();
      idx_t output_count = 0;
@@ -365,6 +462,10 @@ idx_t LMDiskannIndex::Scan(IndexScanState &state, Vector &result) {
 
 // --- Helper Method Implementations (Private to LMDiskannIndex) --- //
 
+/**
+ * @brief Initializes metadata and state for a brand new index.
+ * @param estimated_cardinality Estimated number of rows (unused currently).
+ */
 void LMDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
     if (!db_state_.allocator) {
         throw InternalException("Allocator not initialized in InitializeNewIndex");
@@ -393,6 +494,10 @@ void LMDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
     is_dirty_ = true;
 }
 
+/**
+ * @brief Loads index state and configuration from existing storage.
+ * @param storage_info Storage information provided by DuckDB during load.
+ */
 void LMDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
     if (!db_state_.allocator || db_state_.metadata_ptr.Get() == 0) {
         throw InternalException("Allocator or metadata pointer invalid in LoadFromStorage");
@@ -444,21 +549,45 @@ void LMDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
 
 // --- Distance Helper Wrappers --- //
 
+/**
+ * @brief Calculates approximate distance between a query vector and a compressed neighbor vector.
+ * @param query_ptr Pointer to the float query vector.
+ * @param compressed_neighbor_ptr Pointer to the compressed (Ternary) neighbor vector.
+ * @return Approximate distance.
+ */
 float LMDiskannIndex::CalculateApproxDistance(const float *query_ptr, const_data_ptr_t compressed_neighbor_ptr) {
     return duckdb::CalculateApproxDistance(query_ptr, compressed_neighbor_ptr, config_);
 }
 
+/**
+ * @brief Compresses a float vector into the Ternary format for edge storage.
+ * @param input_vector Pointer to the input float vector.
+ * @param output_compressed_vector Pointer to the output buffer for the compressed vector.
+ */
 void LMDiskannIndex::CompressVectorForEdge(const float* input_vector, data_ptr_t output_compressed_vector) {
     if (!duckdb::CompressVectorForEdge(input_vector, output_compressed_vector, config_)) {
          throw InternalException("Failed to compress vector into Ternary format.");
     }
 }
 
+/**
+ * @brief Calculates exact distance between a query vector and a raw node vector.
+ * @tparam T_QUERY Type of the query vector elements (usually float).
+ * @tparam T_NODE Type of the node vector elements (float or int8_t).
+ * @param query_ptr Pointer to the query vector.
+ * @param node_vector_ptr Pointer to the raw node vector data.
+ * @return Exact distance.
+ */
 template<typename T_QUERY, typename T_NODE>
 float LMDiskannIndex::CalculateExactDistance(const T_QUERY *query_ptr, const_data_ptr_t node_vector_ptr) {
     return duckdb::CalculateDistance<T_QUERY, T_NODE>(query_ptr, reinterpret_cast<const T_NODE*>(node_vector_ptr), config_);
 }
 
+/**
+ * @brief Converts a raw node vector (potentially int8_t) to a float vector.
+ * @param raw_node_vector Pointer to the raw node vector data.
+ * @param float_vector_out Pointer to the output buffer for the float vector.
+ */
 void LMDiskannIndex::ConvertNodeVectorToFloat(const_data_ptr_t raw_node_vector, float* float_vector_out) {
     if (config_.node_vector_type == LMDiskannVectorType::FLOAT32) {
         memcpy(float_vector_out, raw_node_vector, config_.dimensions * sizeof(float));
@@ -475,6 +604,14 @@ template float LMDiskannIndex::CalculateExactDistance<float, int8_t>(const float
 
 // --- Robust Pruning Helper --- //
 
+/**
+ * @brief Applies the Robust Prune algorithm to select neighbors for a node.
+ * @details Implements the pruning logic from the DiskANN paper (Algorithm 1).
+ *          Updates the neighbors directly in the node's block buffer.
+ * @param node_rowid RowID of the node being pruned.
+ * @param node_ptr IndexPointer to the node's block.
+ * @param candidates Initial list of potential neighbors (distance, row_id pairs).
+ */
 void LMDiskannIndex::RobustPrune(row_t node_rowid, IndexPointer node_ptr,
                                  std::vector<std::pair<float, row_t>>& candidates) {
 
@@ -622,6 +759,15 @@ void LMDiskannIndex::RobustPrune(row_t node_rowid, IndexPointer node_ptr,
 
 
 // --- Insertion Helper --- //
+/**
+ * @brief Finds potential neighbors for a new node and connects them.
+ * @details Performs a search starting from the entry point to find candidate neighbors.
+ *          Calls RobustPrune to select the final neighbors for the new node.
+ *          Updates the selected neighbors to potentially add a reciprocal edge back to the new node.
+ * @param new_node_rowid RowID of the node being inserted.
+ * @param new_node_ptr Pointer to the new node's block.
+ * @param new_node_vector_float Pointer to the new node's vector data (as float).
+ */
 void LMDiskannIndex::FindAndConnectNeighbors(row_t new_node_rowid, IndexPointer new_node_ptr, const float *new_node_vector_float) {
     row_t entry_point = GetEntryPoint();
     if (entry_point == NumericLimits<row_t>::Maximum()) {
@@ -685,17 +831,31 @@ void LMDiskannIndex::FindAndConnectNeighbors(row_t new_node_rowid, IndexPointer 
 
 
 // --- Deletion Helper --- //
+/**
+ * @brief Adds a row ID to the persistent deletion queue.
+ * @param deleted_row_id The row ID of the node marked for deletion.
+ */
 void LMDiskannIndex::EnqueueDeletion(row_t deleted_row_id) {
     duckdb::EnqueueDeletion(deleted_row_id, delete_queue_head_ptr_, db_state_.db, *db_state_.allocator);
     is_dirty_ = true;
 }
 
+/**
+ * @brief Processes the deletion queue (Placeholder).
+ * @warning Not implemented. Intended to be called during VACUUM.
+ */
 void LMDiskannIndex::ProcessDeletionQueue() {
      Printer::Print("LMDiskannIndex::ProcessDeletionQueue is not implemented.");
 }
 
 
 // --- Entry Point Helpers --- //
+/**
+ * @brief Gets a valid row ID to use as the entry point for searches.
+ * @details Checks the cached entry point first. If invalid or deleted,
+ *          selects a random node as the new entry point.
+ * @return A valid entry point row ID, or NumericLimits<row_t>::Maximum() if the index is empty.
+ */
 row_t LMDiskannIndex::GetEntryPoint() {
      if (graph_entry_point_rowid_ != NumericLimits<row_t>::Maximum()) {
          IndexPointer ptr_check;
@@ -722,6 +882,11 @@ row_t LMDiskannIndex::GetEntryPoint() {
      return NumericLimits<row_t>::Maximum();
 }
 
+/**
+ * @brief Sets the graph entry point.
+ * @param row_id The row ID of the new entry point node.
+ * @param node_ptr The IndexPointer to the new entry point node.
+ */
 void LMDiskannIndex::SetEntryPoint(row_t row_id, IndexPointer node_ptr) {
     graph_entry_point_rowid_ = row_id;
     graph_entry_point_ptr_ = node_ptr;
@@ -729,6 +894,11 @@ void LMDiskannIndex::SetEntryPoint(row_t row_id, IndexPointer node_ptr) {
     // PersistMetadata(); // Persist immediately? Let Checkpoint handle it.
 }
 
+/**
+ * @brief Selects a random node ID from the index (Placeholder).
+ * @warning Uses inefficient map iteration. Replace with ART sampling when available.
+ * @return A random row ID, or NumericLimits<row_t>::Maximum() if the index is empty.
+ */
 row_t LMDiskannIndex::GetRandomNodeID() {
     // Placeholder: Inefficient map iteration. Replace with ART sampling.
     if (in_memory_rowid_map_.empty()) {
@@ -744,6 +914,12 @@ row_t LMDiskannIndex::GetRandomNodeID() {
 
 // --- Storage interaction helpers (using in-memory map for now) --- //
 
+/**
+ * @brief Tries to retrieve the IndexPointer for a given row ID from the in-memory map.
+ * @param row_id The row ID to look up.
+ * @param node_ptr Output parameter for the found IndexPointer.
+ * @return True if the row ID was found, false otherwise.
+ */
 bool LMDiskannIndex::TryGetNodePointer(row_t row_id, IndexPointer &node_ptr) {
     auto it = in_memory_rowid_map_.find(row_id);
     if (it != in_memory_rowid_map_.end()) {
@@ -755,6 +931,13 @@ bool LMDiskannIndex::TryGetNodePointer(row_t row_id, IndexPointer &node_ptr) {
     return false;
 }
 
+/**
+ * @brief Allocates a new block in the FixedSizeAllocator for a node and maps the row ID.
+ * @details If the row ID already exists but its pointer is invalid (e.g., after vacuum), 
+ *          it reuses the row ID. Updates the in-memory map.
+ * @param row_id The row ID to associate with the new node.
+ * @return IndexPointer to the newly allocated block.
+ */
 IndexPointer LMDiskannIndex::AllocateNode(row_t row_id) {
     if (in_memory_rowid_map_.count(row_id)) {
         IndexPointer existing_ptr;
@@ -775,6 +958,10 @@ IndexPointer LMDiskannIndex::AllocateNode(row_t row_id) {
     return new_node_ptr;
 }
 
+/**
+ * @brief Removes a node's mapping from the in-memory map and frees its block in the allocator.
+ * @param row_id The row ID of the node to delete.
+ */
 void LMDiskannIndex::DeleteNodeFromMapAndFreeBlock(row_t row_id) {
     auto it = in_memory_rowid_map_.find(row_id);
     if (it != in_memory_rowid_map_.end()) {
@@ -788,6 +975,14 @@ void LMDiskannIndex::DeleteNodeFromMapAndFreeBlock(row_t row_id) {
     }
 }
 
+/**
+ * @brief Gets a mutable pointer to the data within a node's block.
+ * @details Uses the FixedSizeAllocator to get the data pointer, marking the buffer as dirty.
+ * @param node_ptr The IndexPointer of the node.
+ * @return A writable data_ptr_t to the start of the node's segment data.
+ * @throws IOException if node_ptr is invalid.
+ * @throws InternalException if the allocator is not initialized.
+ */
 data_ptr_t LMDiskannIndex::GetNodeDataMutable(IndexPointer node_ptr) {
      // Replace IsValid with check against 0
      if (node_ptr.Get() == 0) { throw IOException("Invalid node pointer provided to GetNodeDataMutable."); }
@@ -795,6 +990,14 @@ data_ptr_t LMDiskannIndex::GetNodeDataMutable(IndexPointer node_ptr) {
      return db_state_.allocator->Get(node_ptr, true); // Get mutable pointer, mark dirty
 }
 
+/**
+ * @brief Gets a read-only pointer to the data within a node's block.
+ * @details Uses the FixedSizeAllocator to get the data pointer without marking the buffer as dirty.
+ * @param node_ptr The IndexPointer of the node.
+ * @return A read-only const_data_ptr_t to the start of the node's segment data.
+ * @throws IOException if node_ptr is invalid.
+ * @throws InternalException if the allocator is not initialized.
+ */
 const_data_ptr_t LMDiskannIndex::GetNodeData(IndexPointer node_ptr) {
      // Replace IsValid with check against 0
      if (node_ptr.Get() == 0) { throw IOException("Invalid node pointer provided to GetNodeData."); }

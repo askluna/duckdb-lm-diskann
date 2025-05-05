@@ -214,8 +214,10 @@ private:
     IndexPointer AllocateNode(row_t row_id); // Allocates block and updates map
     /** @brief Removes a node from the map and frees its block. */
     void DeleteNodeFromMapAndFreeBlock(row_t row_id); // Deletes from map and potentially frees block
-    /** @brief Pins a node block buffer using its IndexPointer. */
-    BufferHandle GetNodeBuffer(IndexPointer node_ptr, bool write_lock = false);
+    /** @brief Gets a mutable data pointer to the node data using its IndexPointer. */
+    data_ptr_t GetNodeDataMutable(IndexPointer node_ptr);
+    /** @brief Gets a read-only data pointer to the node data using its IndexPointer. */
+    const_data_ptr_t GetNodeData(IndexPointer node_ptr);
 
     // --- Insertion Helper --- //
     /** @brief Finds neighbors for a new node and connects them (updates new node and neighbors). */
