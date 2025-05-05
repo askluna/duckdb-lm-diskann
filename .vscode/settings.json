@@ -25,7 +25,9 @@
   "cmake.configureArgs": [
       // Define DUCKDB_EXTENSION_CONFIGS pointing to your extension's root folder
       // (${workspaceFolder} refers to the root of your opened project, duckdb-lm-diskann)
-      "-DUCKDB_EXTENSION_CONFIGS=${workspaceFolder}"
+      "-DUCKDB_EXTENSION_CONFIGS=${workspaceFolder}",
+      "-DCMAKE_CXX_STANDARD=20",
+      "-DCMAKE_CXX_STANDARD_REQUIRED=TRUE",
 
       // Add any other specific defines your extension or the DuckDB build might need, e.g.:
       // "-DBUILD_EXTENSIONS=my_extension_name", // (Check DuckDB build system specifics)

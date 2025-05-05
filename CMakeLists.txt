@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 2.8.12...3.29)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # Set extension name here
 set(TARGET_NAME lm_diskann)
 

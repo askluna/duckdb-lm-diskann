@@ -31,6 +31,48 @@ enum class LMDiskannVectorType : uint8_t {
     // Add other types if needed (e.g., BFLOAT16)
 };
 
+// --- Configuration Constants ---
+// Defines string keys for CREATE INDEX options and default values.
+
+// Option strings used in WITH clause, grouped in a struct
+struct LmDiskannOptionKeys {
+    static constexpr const char* METRIC = "METRIC";
+    static constexpr const char* R = "R";
+    static constexpr const char* L_INSERT = "L_INSERT";
+    static constexpr const char* ALPHA = "ALPHA";
+    static constexpr const char* L_SEARCH = "L_SEARCH";
+};
+
+// Default parameter values grouped in a struct
+struct LmDiskannConfigDefaults {
+    static constexpr LMDiskannMetricType METRIC = LMDiskannMetricType::L2;
+    static constexpr uint32_t R = 64;
+    static constexpr uint32_t L_INSERT = 128;
+    static constexpr float ALPHA = 1.2f;
+    static constexpr uint32_t L_SEARCH = 100;
+};
+
+// Format version (separate from parameter defaults)
+inline constexpr uint8_t LMDISKANN_CURRENT_FORMAT_VERSION = 3;
+
+// --- Configuration Struct ---
+struct LMDiskannConfig {
+    // Parameters parsed from options
+    LMDiskannMetricType metric_type = LmDiskannConfigDefaults::METRIC;
+    uint32_t r = LmDiskannConfigDefaults::R;
+    uint32_t l_insert = LmDiskannConfigDefaults::L_INSERT;
+    float alpha = LmDiskannConfigDefaults::ALPHA;
+    uint32_t l_search = LmDiskannConfigDefaults::L_SEARCH;
+
+    // Parameters derived from table/column info (passed in separately or added later)
+    idx_t dimensions = 0;
+    LMDiskannVectorType node_vector_type = LMDiskannVectorType::UNKNOWN;
+
+    // Could add calculated values here too if frequently needed together
+    // idx_t node_vector_size_bytes = 0;
+    // idx_t ternary_plane_size_bytes = 0;
+};
+
 // --- Struct to hold calculated layout offsets ---
 // Stores the byte offsets of different data sections within a node's disk block.
 // Crucial for low-level node accessors. Assumes TERNARY compressed neighbors.
@@ -44,45 +86,25 @@ struct NodeLayoutOffsets {
 };
 
 
-// --- Configuration Constants ---
-// Defines string keys for CREATE INDEX options and default values.
-
-extern const char *LMDISKANN_METRIC_OPTION;
-extern const char *LMDISKANN_R_OPTION;
-extern const char *LMDISKANN_L_INSERT_OPTION;
-extern const char *LMDISKANN_ALPHA_OPTION;
-extern const char *LMDISKANN_L_SEARCH_OPTION;
-
-extern const LMDiskannMetricType LMDISKANN_DEFAULT_METRIC;
-extern const uint32_t LMDISKANN_DEFAULT_R;
-extern const uint32_t LMDISKANN_DEFAULT_L_INSERT;
-extern const float LMDISKANN_DEFAULT_ALPHA;
-extern const uint32_t LMDISKANN_DEFAULT_L_SEARCH;
-extern const uint8_t LMDISKANN_CURRENT_FORMAT_VERSION;
-
 // --- Configuration Functions ---
 // Provides functions to parse options, validate parameters, calculate sizes,
 // and determine the node block layout.
 
-// Parses options from the CREATE INDEX statement's WITH clause.
-void ParseOptions(const case_insensitive_map_t<Value> &options,
-                  LMDiskannMetricType &metric_type,
-                  uint32_t &r, uint32_t &l_insert,
-                  float &alpha, uint32_t &l_search);
+// Parses options from the CREATE INDEX statement's WITH clause into a config struct.
+LMDiskannConfig ParseOptions(const case_insensitive_map_t<Value> &options);
 
-// Validates the combination of parameters. Implicitly assumes TERNARY neighbors.
-void ValidateParameters(LMDiskannMetricType metric_type,
-                        uint32_t r, uint32_t l_insert, float alpha, uint32_t l_search);
+// Validates the combination of parameters within the config struct.
+void ValidateParameters(const LMDiskannConfig &config);
 
 // Calculates the byte size of different node vector types.
 idx_t GetVectorTypeSizeBytes(LMDiskannVectorType type);
-// Calculates the byte size of the compressed ternary format per neighbor (both planes combined).
-idx_t GetTernaryVectorSizeBytes(idx_t dimensions); // Size per neighbor
 
-// Calculates the internal layout offsets within a node block.
-// Implicitly assumes TERNARY neighbors.
-NodeLayoutOffsets CalculateLayoutInternal(idx_t dimensions, idx_t r,
-                                          idx_t node_vector_size_bytes);
+// Calculates the byte size of the compressed ternary format per neighbor (one plane).
+idx_t GetTernaryPlaneSizeBytes(idx_t dimensions);
+
+// Calculates the internal layout offsets within a node block based on config.
+// Requires dimensions and node_vector_type to be set in the config.
+NodeLayoutOffsets CalculateLayoutInternal(const LMDiskannConfig &config);
 
 // --- Metadata Struct --- //
 // Holds all parameters persisted in the index metadata block.
