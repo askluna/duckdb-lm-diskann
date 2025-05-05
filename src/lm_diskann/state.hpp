@@ -1,59 +1,62 @@
+/**
+ * @file state.hpp
+ * @brief Defines the scan state structure used during LM-DiskANN index searches.
+ */
 #pragma once
 
 #include "duckdb.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/unordered_set.hpp"
-#include "duckdb/common/types/value.hpp"
+#include "duckdb/common/types/row/row_layout.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/storage/data_pointer.hpp"
 
 #include <queue>
 #include <vector>
 #include <utility> // For std::pair
+#include <set> // Using std::set for visited
 
 namespace duckdb {
 
-// --- Scan State ---
-// Represents the state maintained during an index scan operation (e.g., a k-NN query).
-// Inherits from DuckDB's base IndexScanState.
+/**
+ * @brief Holds the state required during an LM-DiskANN index scan (k-NN search).
+ *
+ * @details This includes the query vector, parameters like k and L_search,
+ *          the candidate priority queue for the beam search, the set of visited nodes,
+ *          and the final top-k results found so far.
+ */
 struct LMDiskannScanState : public IndexScanState {
-    Vector query_vector; // Keep handle for lifetime
-    const float* query_vector_ptr = nullptr; // Raw pointer to query data (assumed float)
-    idx_t k;             // Number of neighbors requested
-    idx_t l_search;      // Search list size (beam width)
+	/**
+	 * @brief Constructor for LMDiskannScanState.
+	 * @param query_vec The query vector.
+	 * @param k_param The number of nearest neighbors requested (top-k).
+	 * @param l_search_param The search list size parameter (L_search).
+	 */
+	LMDiskannScanState(const Vector &query_vec, idx_t k_param, uint32_t l_search_param);
 
-    // Results collected during the scan
-    std::vector<row_t> result_rowids; // Row IDs of potential candidates
-    std::vector<float> result_scores; // Corresponding negated similarity scores
+	Vector query_vector;           // The query vector itself (keeps data alive).
+	const_data_ptr_t query_vector_ptr; // Pointer to the query vector data (usually float). Cast before use.
+	idx_t k;                         // Number of nearest neighbors requested.
+	uint32_t l_search;               // Search list size parameter (L_search).
 
-    // Candidate priority queue (min-heap based on distance)
-    // Stores pairs of (distance, row_t)
-    std::priority_queue<std::pair<float, row_t>,
-                        std::vector<std::pair<float, row_t>>,
-                        std::greater<std::pair<float, row_t>>> candidates;
+	// Type alias for distance/node pairs (using float for distance).
+	using dist_node_pair_t = std::pair<float, row_t>;
 
-    // Visited set (using row_t as key)
-    duckdb::unordered_set<row_t> visited;
+	// Min-priority queue for candidates (stores {-distance, node_id} to get max distance at top).
+	// We use negative distance because priority_queue is a max-heap.
+	std::priority_queue<dist_node_pair_t> candidates;
 
-    // Top-k results found so far (for re-ranking if needed)
-    // Store pairs of (exact_distance, row_t)
-    std::vector<std::pair<float, row_t>> top_candidates;
+	// Max-priority queue to store the final top-k results found so far {distance, node_id}.
+	// This is populated *after* the main search, potentially with exact distances.
+	std::priority_queue<dist_node_pair_t> top_candidates;
 
-    // Constructor
-    LMDiskannScanState(const Vector &query, idx_t k_p, idx_t l_search_p)
-        : query_vector(query.GetType()), // Initialize with type first
-          k(k_p),
-          l_search(l_search_p)
-    {
-        if (query.GetType().id() != LogicalTypeId::ARRAY || ArrayType::GetChildType(query.GetType()).id() != LogicalTypeId::FLOAT) {
-            throw BinderException("LM_DISKANN query vector must be a FLOAT ARRAY");
-        }
-        query_vector.Reference(query); // Now reference the data
-        query_vector.Flatten(1); // Assuming single vector
-        query_vector_ptr = FlatVector::GetData<float>(query_vector);
-    }
+	// Set of nodes (RowIDs) already visited during the search to avoid cycles/redundancy.
+	std::set<row_t> visited;
 
-    ~LMDiskannScanState() override = default; // Default destructor
+	// --- Fields below might be used by the IndexScanExecutor --- //
+	// std::vector<row_t> result_rowids; // Row IDs of potential candidates - handled by base class?
+	// std::vector<float> result_scores; // Corresponding negated similarity scores - handled by base class?
 };
 
 } // namespace duckdb

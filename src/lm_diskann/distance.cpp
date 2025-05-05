@@ -1,3 +1,7 @@
+/**
+ * @file distance.cpp
+ * @brief Implements distance calculation and vector conversion functions.
+ */
 #include "distance.hpp"
 #include "config.hpp" // Needed for LMDiskannMetricType enum definition
 #include "ternary_quantization.hpp" // Needed for Approx Similarity: WordsPerPlane, EncodeTernary, GetKernel

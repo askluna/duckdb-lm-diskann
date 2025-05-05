@@ -1,68 +1,83 @@
+/**
+ * @file node.cpp
+ * @brief Implements low-level node block accessor functions.
+ */
 #include "node.hpp"
 #include "duckdb/storage/data_pointer.hpp" // For Load/Store
 #include "config.hpp" // Include config again here for layout struct definition
+#include "duckdb/common/helper.hpp" // For AlignValue
+#include "duckdb/common/limits.hpp" // For NumericLimits
+#include "ternary_quantization.hpp" // For WordsPerPlane
 
 #include <cstring> // For memset
 
 namespace duckdb {
 
-// --- Node Block Accessor Implementation ---
-namespace LMDiskannNodeAccessors {
+// --- LMDiskannNodeAccessors Method Implementations --- //
 
-    // --- Getters (const version) ---
-    uint16_t GetNeighborCount(const_data_ptr_t block_ptr) {
-        // Neighbor count is always at the beginning of the block.
-        return Load<uint16_t>(block_ptr + 0 /* layout.neighbor_count_offset assumed 0 */);
-    }
+void LMDiskannNodeAccessors::InitializeNodeBlock(data_ptr_t node_block_ptr, idx_t block_size_bytes) {
+    // Zero out the entire block initially
+    memset(node_block_ptr, 0, block_size_bytes);
+    // Set neighbor count to 0 (although memset already does this)
+    SetNeighborCount(node_block_ptr, 0);
+}
 
-    const_data_ptr_t GetNodeVector(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout) {
-        return block_ptr + layout.node_vector_offset;
-    }
+uint16_t LMDiskannNodeAccessors::GetNeighborCount(const_data_ptr_t node_block_ptr) {
+    // Neighbor count is always at offset 0
+    return Load<uint16_t>(node_block_ptr);
+}
 
-    const row_t* GetNeighborIDs(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout) {
-        return reinterpret_cast<const row_t*>(block_ptr + layout.neighbor_ids_offset);
-    }
+void LMDiskannNodeAccessors::SetNeighborCount(data_ptr_t node_block_ptr, uint16_t count) {
+    // Neighbor count is always at offset 0
+    Store<uint16_t>(count, node_block_ptr);
+}
 
-    const_data_ptr_t GetNeighborPositivePlane(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes) {
-        // Note: Assumes neighbor_idx < R (max neighbors allowed by layout)
-        return block_ptr + layout.neighbor_pos_planes_offset + (neighbor_idx * plane_size_bytes);
-    }
+const_data_ptr_t LMDiskannNodeAccessors::GetNodeVector(const_data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout) {
+    return node_block_ptr + layout.node_vector_offset;
+}
 
-    const_data_ptr_t GetNeighborNegativePlane(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes) {
-        // Note: Assumes neighbor_idx < R
-        return block_ptr + layout.neighbor_neg_planes_offset + (neighbor_idx * plane_size_bytes);
-    }
+data_ptr_t LMDiskannNodeAccessors::GetNodeVectorMutable(data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout) {
+    return node_block_ptr + layout.node_vector_offset;
+}
 
-    // --- Setters (non-const version) ---
-    void SetNeighborCount(data_ptr_t block_ptr, uint16_t count) {
-        Store<uint16_t>(count, block_ptr + 0 /* layout.neighbor_count_offset assumed 0 */);
-    }
+const row_t* LMDiskannNodeAccessors::GetNeighborIDsPtr(const_data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout) {
+    return reinterpret_cast<const row_t*>(node_block_ptr + layout.neighbor_ids_offset);
+}
 
-    data_ptr_t GetNodeVectorMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout) {
-        return block_ptr + layout.node_vector_offset;
-    }
+row_t* LMDiskannNodeAccessors::GetNeighborIDsPtrMutable(data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout) {
+    return reinterpret_cast<row_t*>(node_block_ptr + layout.neighbor_ids_offset);
+}
 
-    row_t* GetNeighborIDsMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout) {
-        return reinterpret_cast<row_t*>(block_ptr + layout.neighbor_ids_offset);
-    }
+TernaryPlanesView LMDiskannNodeAccessors::GetNeighborTernaryPlanes(const_data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout, uint16_t neighbor_idx, idx_t dimensions) {
+    TernaryPlanesView view;
+    view.dimensions = dimensions;
+    view.words_per_plane = WordsPerPlane(dimensions);
+    idx_t plane_size_bytes = view.words_per_plane * sizeof(uint64_t);
 
-    data_ptr_t GetNeighborPositivePlaneMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes) {
-        // Note: Assumes neighbor_idx < R
-        return block_ptr + layout.neighbor_pos_planes_offset + (neighbor_idx * plane_size_bytes);
-    }
+    // Calculate base pointers for the plane arrays
+    const_data_ptr_t pos_planes_base = node_block_ptr + layout.neighbor_pos_planes_offset;
+    const_data_ptr_t neg_planes_base = node_block_ptr + layout.neighbor_neg_planes_offset;
 
-    data_ptr_t GetNeighborNegativePlaneMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes) {
-        // Note: Assumes neighbor_idx < R
-        return block_ptr + layout.neighbor_neg_planes_offset + (neighbor_idx * plane_size_bytes);
-    }
+    // Calculate pointer for the specific neighbor's plane
+    view.positive_plane = pos_planes_base + (neighbor_idx * plane_size_bytes);
+    view.negative_plane = neg_planes_base + (neighbor_idx * plane_size_bytes);
+    return view;
+}
 
-    // --- Initialization Helper ---
-    void InitializeNodeBlock(data_ptr_t block_ptr, idx_t block_size) {
-        memset(block_ptr, 0, block_size);
-        SetNeighborCount(block_ptr, 0);
-        // Initialize any other flags here if added to layout
-    }
+MutableTernaryPlanesView LMDiskannNodeAccessors::GetNeighborTernaryPlanesMutable(data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout, uint16_t neighbor_idx, idx_t dimensions) {
+    MutableTernaryPlanesView view;
+    view.dimensions = dimensions;
+    view.words_per_plane = WordsPerPlane(dimensions);
+    idx_t plane_size_bytes = view.words_per_plane * sizeof(uint64_t);
 
-} // namespace LMDiskannNodeAccessors
+    // Calculate base pointers for the plane arrays
+    data_ptr_t pos_planes_base = node_block_ptr + layout.neighbor_pos_planes_offset;
+    data_ptr_t neg_planes_base = node_block_ptr + layout.neighbor_neg_planes_offset;
+
+    // Calculate pointer for the specific neighbor's plane
+    view.positive_plane = pos_planes_base + (neighbor_idx * plane_size_bytes);
+    view.negative_plane = neg_planes_base + (neighbor_idx * plane_size_bytes);
+    return view;
+}
 
 } // namespace duckdb

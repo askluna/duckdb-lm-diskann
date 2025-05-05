@@ -1,3 +1,7 @@
+/**
+ * @file storage.hpp
+ * @brief Declares functions related to LM-DiskANN index persistence and storage management.
+ */
 #pragma once
 
 #include "duckdb.hpp"
@@ -15,37 +19,122 @@ class AttachedDatabase;
 struct NodeLayoutOffsets;
 
 // --- Storage Management Interface (Placeholders/Signatures) --- //
+// These functions currently assume an external map/ART is used.
+// They might be moved into LMDiskannIndex or a dedicated storage class later.
 
-// Looks up row_id in the map (placeholder - needs implementation using ART)
-bool TryGetNodePointer(row_t row_id, IndexPointer &node_ptr, AttachedDatabase &db /* , ART* rowid_map */);
+/**
+ * @brief Tries to find the node pointer for a given RowID.
+ * @details Placeholder - needs implementation using ART.
+ * @param row_id The RowID to lookup.
+ * @param[out] node_ptr Output parameter for the found IndexPointer.
+ * @param db Attached database reference (needed for BufferManager access).
+ * @param rowid_map Pointer to the ART instance (or similar map).
+ * @return True if found, false otherwise.
+ */
+// bool TryGetNodePointer(row_t row_id, IndexPointer &node_ptr, AttachedDatabase &db /* , ART* rowid_map */);
 
-// Allocates block and updates map (placeholder - needs implementation using ART)
-IndexPointer AllocateNode(row_t row_id, AttachedDatabase &db, FixedSizeAllocator &allocator /* , ART* rowid_map */);
+/**
+ * @brief Allocates a new node block and updates the RowID map.
+ * @details Placeholder - needs implementation using ART.
+ * @param row_id The RowID for the new node.
+ * @param db Attached database reference.
+ * @param allocator The FixedSizeAllocator for node blocks.
+ * @param rowid_map Pointer to the ART instance (or similar map).
+ * @return IndexPointer to the newly allocated block.
+ * @throws ConstraintException if the row_id already exists.
+ * @throws InternalException if allocation fails.
+ */
+// IndexPointer AllocateNode(row_t row_id, AttachedDatabase &db, FixedSizeAllocator &allocator /* , ART* rowid_map */);
 
-// Deletes from map and potentially frees block (placeholder - needs implementation using ART)
-void DeleteNodeFromMapAndFreeBlock(row_t row_id, AttachedDatabase &db, FixedSizeAllocator &allocator /* , ART* rowid_map */);
+/**
+ * @brief Deletes a node from the RowID map and frees its associated block.
+ * @details Placeholder - needs implementation using ART.
+ * @param row_id The RowID to delete.
+ * @param db Attached database reference.
+ * @param allocator The FixedSizeAllocator for node blocks.
+ * @param rowid_map Pointer to the ART instance (or similar map).
+ */
+// void DeleteNodeFromMapAndFreeBlock(row_t row_id, AttachedDatabase &db, FixedSizeAllocator &allocator /* , ART* rowid_map */);
 
-// Pins block using IndexPointer.
+/**
+ * @brief Pins a block buffer using its IndexPointer.
+ * @param node_ptr The IndexPointer to the block.
+ * @param db Attached database reference.
+ * @param allocator The FixedSizeAllocator used by the index.
+ * @param write_lock Whether to acquire a write lock (defaults to false).
+ * @return BufferHandle for the pinned block.
+ * @throws IOException if the pointer is invalid or pinning fails.
+ */
 BufferHandle GetNodeBuffer(IndexPointer node_ptr, AttachedDatabase &db, FixedSizeAllocator &allocator, bool write_lock = false);
 
-// Writes index metadata struct to the metadata block.
-void PersistMetadata(IndexPointer metadata_ptr, AttachedDatabase &db, FixedSizeAllocator &allocator,
-                     const LMDiskannMetadata &metadata);
+// --- Metadata Persistence --- //
 
-// Reads index metadata struct from the metadata block.
-void LoadMetadata(IndexPointer metadata_ptr, AttachedDatabase &db, FixedSizeAllocator &allocator,
-                  LMDiskannMetadata &metadata_out);
+/**
+ * @brief Persists the index metadata to a specified block.
+ * @param metadata_ptr The IndexPointer to the metadata block.
+ * @param db The attached database reference.
+ * @param allocator The FixedSizeAllocator used by the index.
+ * @param metadata The metadata struct to persist.
+ */
+void PersistMetadata(IndexPointer metadata_ptr, AttachedDatabase &db, FixedSizeAllocator &allocator, const LMDiskannMetadata& metadata);
 
-// Adds row_id to the persistent delete queue (placeholder).
+/**
+ * @brief Loads the index metadata from a specified block.
+ * @param metadata_ptr The IndexPointer to the metadata block.
+ * @param db The attached database reference.
+ * @param allocator The FixedSizeAllocator used by the index.
+ * @param[out] metadata The metadata struct to load into.
+ */
+void LoadMetadata(IndexPointer metadata_ptr, AttachedDatabase &db, FixedSizeAllocator &allocator, LMDiskannMetadata& metadata);
+
+// --- Delete Queue Management --- //
+
+/**
+ * @brief Enqueues a RowID for deletion (placeholder implementation).
+ * @details This likely involves allocating a small block for the queue entry
+ *          and linking it to the current queue head.
+ * @param deleted_row_id The RowID of the node being deleted.
+ * @param[in,out] delete_queue_head_ptr Reference to the head pointer of the delete queue (will be updated).
+ * @param db The attached database reference.
+ * @param allocator The FixedSizeAllocator (or potentially a dedicated one for the queue).
+ */
 void EnqueueDeletion(row_t deleted_row_id, IndexPointer &delete_queue_head_ptr, AttachedDatabase &db, FixedSizeAllocator &allocator);
 
-// Processes the queue during Vacuum (placeholder).
-void ProcessDeletionQueue(IndexPointer &delete_queue_head_ptr, AttachedDatabase &db, FixedSizeAllocator &allocator, const NodeLayoutOffsets& layout, idx_t edge_vector_size_bytes /*, ART* rowid_map */);
+/**
+ * @brief Processes the deletion queue (placeholder implementation).
+ * @details Called during VACUUM. Iterates the queue, finds referring nodes,
+ *          updates their neighbor lists, and frees queue blocks.
+ * @param delete_queue_head_ptr Reference to the head pointer of the delete queue.
+ * @param db The attached database reference.
+ * @param allocator The FixedSizeAllocator.
+ * @param index The index instance (needed for finding referring nodes, potentially via ART).
+ */
+// Forward declare LMDiskannIndex if needed
+// class LMDiskannIndex;
+// void ProcessDeletionQueue(IndexPointer &delete_queue_head_ptr, AttachedDatabase &db, FixedSizeAllocator &allocator, LMDiskannIndex &index);
 
-// Gets a valid entry point row_id (persisted or random - placeholder).
-row_t GetEntryPointRowId(IndexPointer graph_entry_point_ptr, AttachedDatabase &db, FixedSizeAllocator &allocator /*, ART* rowid_map */);
+// --- Entry Point / Node ID Retrieval --- //
+// These also depend on the RowID mapping implementation (ART)
 
-// Gets a random node ID from the index (placeholder - needs ART implementation).
-row_t GetRandomNodeID(AttachedDatabase &db, FixedSizeAllocator &allocator /*, ART* rowid_map */);
+/**
+ * @brief Retrieves the RowID stored within a specific node block (if stored there).
+ * @details Placeholder - Requires node layout definition and ART integration for reliable inverse lookup.
+ * @param node_ptr Pointer to the node block.
+ * @param db The attached database reference.
+ * @param allocator The FixedSizeAllocator used by the index.
+ * @return The RowID found in the node block (or potentially MAX_ROW_ID).
+ * @throws IOException if the block cannot be read.
+ */
+row_t GetEntryPointRowId(IndexPointer node_ptr, AttachedDatabase &db, FixedSizeAllocator &allocator);
+
+/**
+ * @brief Gets a random node ID from the index.
+ * @details Placeholder - needs ART implementation for efficient random sampling.
+ * @param db The attached database reference.
+ * @param allocator The FixedSizeAllocator used by the index.
+ * @param rowid_map Pointer to the ART instance.
+ * @return A random RowID from the index, or MAX_ROW_ID if empty.
+ */
+// row_t GetRandomNodeID(AttachedDatabase &db, FixedSizeAllocator &allocator /*, ART* rowid_map */);
 
 } // namespace duckdb

@@ -40,81 +40,41 @@ Integrating a disk-based, graph-based ANN vector index into DuckDB while support
 * For post-filtering (complex filters, fusion), the primary requirement for your index scan is to efficiently support retrieving a larger initial candidate set (`k`) from the disk-based structure. The complex filtering logic itself will be handled by subsequent standard DuckDB operators processing the results in a vectorized manner.
 * Disk I/O will be a major factor. Design decisions (like graph structure, node layout on disk, caching) should aim to minimize disk reads during traversal, especially considering potential brute-force requirements under pre-filtering scenarios.
 
-<div style="text-align: center">⁂</div>
 
-[^1]: https://cloud.google.com/bigquery/docs/vector-index
+## Query Pushdown Explained
 
-[^2]: https://www.instaclustr.com/education/vector-database/what-is-vector-similarity-search-pros-cons-and-5-tips-for-success/
+**Query pushdown** is a database optimization technique where parts of a query's workload (like filtering, aggregation, or selecting specific columns) are moved ("pushed down") as close as possible to the data source or storage layer[1][3][4][5].
 
-[^3]: https://www.pinecone.io/learn/vector-search-filtering/
+**The Goal:** The primary aim is to reduce the amount of data that needs to be retrieved, transferred, and processed by the higher levels of the query engine[1][5]. By filtering or processing data earlier, ideally where it resides, the system avoids unnecessary work on irrelevant data, significantly improving query performance[1][5].
 
-[^4]: https://weaviate.io/blog/hybrid-search-fusion-algorithms
+**Example (Predicate/Filter Pushdown):**
+Imagine a query: `SELECT name FROM users WHERE country = 'Canada';`
+*   **Without Pushdown:** The engine might retrieve *all* rows (all names and countries) from the `users` table, bring them into memory, and *then* apply the `WHERE country = 'Canada'` filter to discard rows for other countries[1][5].
+*   **With Pushdown:** The query optimizer pushes the `WHERE country = 'Canada'` condition down to the component responsible for reading the `users` table (the storage engine or scanner). This component then reads and returns *only* the rows where the country is 'Canada'[1][5]. This is much more efficient, especially for large tables.
 
-[^5]: https://milvus.io/ai-quick-reference/can-i-combine-product-metadata-filters-with-vector-search
+DuckDB utilizes pushdown extensively. For instance, when querying Parquet files, it pushes down filters (`WHERE` clauses) and projections (`SELECT` specific columns) to the Parquet reader, using file statistics (like min/max values in row groups) to skip reading unnecessary data entirely[2].
 
-[^6]: https://tembo.io/blog/vector-indexes-in-pgvector/
+## Relevance to Your Custom ANN Index Extension
 
-[^7]: https://www.youtube.com/watch?v=H_kJDHvu-v8
+Query pushdown is **highly relevant** and, in fact, fundamental to the purpose and function of your custom ANN index extension. Your index *is* the mechanism that enables specific kinds of pushdown for vector similarity searches.
 
-[^8]: https://www.datastax.com/guides/what-is-a-vector-index
+1.  **Pushing Down the Vector Search Operation:**
+    *   When a user runs a query like `SELECT ... FROM my_table ORDER BY vector_distance(embedding, ?) LIMIT 10;`, the core optimization your extension provides is to *push down* the computationally expensive task of finding the nearest neighbors to your custom index scan operator.
+    *   Instead of DuckDB scanning the entire table and calculating distances for every row (the non-pushed-down approach), the optimizer recognizes the pattern and delegates the search to your index. Your index scan operator executes the ANN graph traversal (on disk), efficiently finding the top-k candidates. This is the primary pushdown your index facilitates.
 
-[^9]: https://qdrant.tech/articles/vector-search-filtering/
+2.  **Pushing Down the `LIMIT`:**
+    *   The `LIMIT k` clause is crucial for ANN searches. This limit *must* be pushed down to your index scan operator. Your operator needs to know how many neighbors (`k`) to find during its graph traversal. Without this pushdown, the index wouldn't know when to stop searching efficiently.
 
-[^10]: https://en.wikipedia.org/wiki/Nearest_neighbor_search
+3.  **Pushing Down Filters (Interaction with `WHERE` Clauses):**
+    *   **Post-filtering:** As discussed before, if you have `WHERE metadata_col = 'value' ORDER BY vector_distance(...) LIMIT k`, the most common approach is to push down the vector search (with a potentially larger `k'`) to your index first. Your index returns candidate ROWIDs. DuckDB then applies the `WHERE` filter using its standard vectorized engine on this smaller set. The *vector search* is pushed down.
+    *   **Pre-filtering:** If DuckDB first applies the `WHERE metadata_col = 'value'` filter, it could potentially push down the resulting *candidate ROWIDs* to your index scan operator. Your operator would then perform the ANN search *only* on this subset. This pushes down both the initial filter *and* the subsequent constrained vector search to your operator. However, as noted previously, this can challenge the performance of standard ANN algorithms on the filtered subset.
+    *   DuckDB extensions (like potentially yours) can receive pushed-down filters (`WHERE` clauses) at the scan node[].
 
-[^11]: https://myscale.com/blog/optimizing-filtered-vector-search/
+4.  **Projection Pushdown (Benefit):**
+    *   While your index scan operator itself likely only deals with vectors and ROWIDs, DuckDB's native projection pushdown benefits the overall query. When DuckDB fetches the actual data for the ROWIDs returned by your index, it will only read the columns specified in the `SELECT` list from the base table storage, avoiding reading unnecessary columns[2]. Your index helps make this subsequent step much smaller and faster.
 
-[^12]: https://docs.starrocks.io/docs/table_design/indexes/vector_index/
+In summary, your custom ANN index extension fundamentally relies on the concept of pushdown. It acts as a specialized component to which DuckDB can push down the core vector search operation, the `LIMIT`, and potentially interact with pushed-down filters, thereby avoiding costly full table scans and enabling efficient similarity searches.
 
-[^13]: https://www.pinecone.io/learn/vector-search-filtering/
 
-[^14]: https://cloud.google.com/spanner/docs/find-approximate-nearest-neighbors
-
-[^15]: https://www.alibabacloud.com/help/en/open-search/vector-search-edition/best-practices-of-using-vector-indexes
-
-[^16]: https://docs.singlestore.com/cloud/developer-resources/functional-extensions/tuning-vector-indexes-and-queries/
-
-[^17]: https://milvus.io/docs/single-vector-search.md
-
-[^18]: https://turso.tech/blog/approximate-nearest-neighbor-search-with-diskann-in-libsql
-
-[^19]: https://redis.io/docs/latest/develop/interact/search-and-query/advanced-concepts/vectors/
-
-[^20]: https://weaviate.io/blog/speed-up-filtered-vector-search
-
-[^21]: https://docs.oracle.com/en/database/oracle/oracle-database/23/vecse/understand-hybrid-search.html
-
-[^22]: https://upstash.com/docs/vector/sdks/ts/commands/query
-
-[^23]: https://cloud.google.com/vertex-ai/docs/vector-search/filtering
-
-[^24]: https://turso.tech/blog/filtering-in-vector-search-with-metadata-and-rag-pipelines
-
-[^25]: https://arxiv.org/pdf/2210.11934.pdf
-
-[^26]: https://docs.llamaindex.ai/en/stable/examples/low_level/fusion_retriever/
-
-[^27]: https://www.elastic.co/what-is/vector-search
-
-[^28]: https://arxiv.org/html/2504.19754v1
-
-[^29]: https://qdrant.tech/articles/vector-search-resource-optimization/
-
-[^30]: https://www.youtube.com/watch?v=a0MYGhLdxXc
-
-[^31]: https://zilliz.com/learn/vector-index
-
-[^32]: https://docs.oracle.com/en/database/oracle/oracle-database/23/vecse/optimizer-plans-hnsw-vector-indexes.html
-
-[^33]: https://docs.oracle.com/en/database/oracle/oracle-database/23/vecse/query-hybrid-vector-indexes-end-end-example.html
-
-[^34]: https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm
-
-[^35]: https://help.salesforce.com/s/articleView?id=sf.c360_a_search_index_query_prefilters.htm\&language=en_US\&type=5
-
-[^36]: https://www.reddit.com/r/vectordatabase/comments/1ff5udu/a_complete_guide_to_filtering_in_vector_search/
-
-[^37]: https://www.instaclustr.com/education/vector-database/what-is-vector-similarity-search-pros-cons-and-5-tips-for-success/
-
-[^38]: https://weaviate.io/developers/academy/py/standalone/which_search/strategies
+https://www.perplexity.ai/search/find-me-resources-on-how-duckd-tmVhXeWVTJ6Hjrn0dvPHzQ
 

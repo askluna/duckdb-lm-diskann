@@ -1,41 +1,51 @@
+/**
+ * @file config.hpp
+ * @brief Defines configuration structures, enums, constants, and functions for the LM-DiskANN index.
+ */
 #pragma once
 
 #include "duckdb.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/execution/index/index_pointer.hpp"
+#include "duckdb/common/types.hpp"
+#include "duckdb/common/enums/vector_type.hpp"
 
 #include <cstdint>
+#include <string>
 
 namespace duckdb {
 
 
-// --- Enums for LM-DiskANN Parameters ---
-// Defines the types for configuration options like distance metric,
-// vector storage types (for nodes).
+// --- Enums for LM-DiskANN Parameters --- //
 
-// Corresponds to nDistanceFunc / VECTOR_METRIC_TYPE_PARAM_ID
+/**
+ * @brief Metric types supported by the index.
+ * Corresponds to nDistanceFunc / VECTOR_METRIC_TYPE_PARAM_ID
+ */
 enum class LMDiskannMetricType : uint8_t {
-    UNKNOWN = 0,
-    L2 = 1,      // VECTOR_METRIC_TYPE_L2
-    COSINE = 2,  // VECTOR_METRIC_TYPE_COS
-    IP = 3       // Inner Product
-    // Add HAMMING later if needed for FLOAT1BIT
+    UNKNOWN = 0, // Default / Unset state
+    L2 = 1,     // Euclidean distance
+    COSINE = 2, // Cosine similarity (often converted to distance: 1 - cosine)
+    IP = 3,     // Inner product
+    HAMMING = 4 // Hamming distance (Potentially for binary vectors)
 };
 
-// Corresponds to nNodeVectorType / VECTOR_TYPE_PARAM_ID
+/**
+ * @brief Data types supported for the main node vectors.
+ * Corresponds to nNodeVectorType / VECTOR_TYPE_PARAM_ID
+ */
 enum class LMDiskannVectorType : uint8_t {
-    UNKNOWN = 0,
-    FLOAT32 = 1, // VECTOR_TYPE_FLOAT
-    INT8 = 2,    // VECTOR_TYPE_INT8
-    FLOAT16 = 3  // VECTOR_TYPE_FLOAT16 (Requires conversion/handling)
-    // Add other types if needed (e.g., BFLOAT16)
+    UNKNOWN = 0, // Default / Unset state
+    FLOAT32 = 1, // 32-bit floating point
+    INT8 = 2,    // 8-bit integer (requires quantization parameters potentially)
 };
 
-// --- Configuration Constants ---
-// Defines string keys for CREATE INDEX options and default values.
+// --- Configuration Constants --- //
 
-// Option strings used in WITH clause, grouped in a struct
+/**
+ * @brief Option keys used in the CREATE INDEX ... WITH (...) clause.
+ */
 struct LmDiskannOptionKeys {
     static constexpr const char* METRIC = "METRIC";
     static constexpr const char* R = "R";
@@ -44,7 +54,9 @@ struct LmDiskannOptionKeys {
     static constexpr const char* L_SEARCH = "L_SEARCH";
 };
 
-// Default parameter values grouped in a struct
+/**
+ * @brief Default values for LM-DiskANN configuration parameters.
+ */
 struct LmDiskannConfigDefaults {
     static constexpr LMDiskannMetricType METRIC = LMDiskannMetricType::L2;
     static constexpr uint32_t R = 64;
@@ -53,76 +65,92 @@ struct LmDiskannConfigDefaults {
     static constexpr uint32_t L_SEARCH = 100;
 };
 
-// Format version (separate from parameter defaults)
+/**
+ * @brief Current on-disk format version for the index metadata.
+ */
 inline constexpr uint8_t LMDISKANN_CURRENT_FORMAT_VERSION = 3;
 
 
-// --- Configuration Struct ---
+// --- Configuration Struct --- //
+/**
+ * @brief Holds the core configuration parameters for the LM-DiskANN index.
+ */
 struct LMDiskannConfig {
-    // Parameters parsed from options
-    LMDiskannMetricType metric_type = LmDiskannConfigDefaults::METRIC;
-    uint32_t r = LmDiskannConfigDefaults::R;
-    uint32_t l_insert = LmDiskannConfigDefaults::L_INSERT;
-    float alpha = LmDiskannConfigDefaults::ALPHA;
-    uint32_t l_search = LmDiskannConfigDefaults::L_SEARCH;
+    LMDiskannMetricType metric_type = LmDiskannConfigDefaults::METRIC; // Distance metric used for comparisons.
+    uint32_t r = LmDiskannConfigDefaults::R;                           // Max neighbors (degree) per node in the graph (R).
+    uint32_t l_insert = LmDiskannConfigDefaults::L_INSERT;             // Size of the candidate list during index insertion (L_insert).
+    float alpha = LmDiskannConfigDefaults::ALPHA;                      // Alpha parameter for pruning during insertion.
+    uint32_t l_search = LmDiskannConfigDefaults::L_SEARCH;             // Size of the candidate list during search (L_search).
 
-    // Parameters derived from table/column info (passed in separately or added later)
-    idx_t dimensions = 0;
-    LMDiskannVectorType node_vector_type = LMDiskannVectorType::UNKNOWN;
-
-    // Could add calculated values here too if frequently needed together
-    // idx_t node_vector_size_bytes = 0;
-    // idx_t ternary_plane_size_bytes = 0;
+    idx_t dimensions = 0;                                              // Dimensionality of the vectors. Derived from column type.
+    LMDiskannVectorType node_vector_type = LMDiskannVectorType::UNKNOWN; // Data type of the node vectors. Derived from column type.
 };
 
-// --- Struct to hold calculated layout offsets ---
-// Stores the byte offsets of different data sections within a node's disk block.
-// Crucial for low-level node accessors. Assumes TERNARY compressed neighbors.
+// --- Struct to hold calculated layout offsets --- //
+/**
+ * @brief Stores the calculated byte offsets for different data sections within a node's disk block.
+ * @details Assumes TERNARY compressed neighbors. Crucial for low-level node accessors.
+ */
 struct NodeLayoutOffsets {
-    idx_t neighbor_count_offset = 0; // Offset of the neighbor count (uint16_t) - Typically 0
-    idx_t node_vector_offset = 0;    // Offset of the start of the node's full vector data
-    idx_t neighbor_ids_offset = 0;   // Offset of the start of the neighbor row_t array
-    idx_t neighbor_pos_planes_offset = 0; // Offset of the start of the positive ternary planes array
-    idx_t neighbor_neg_planes_offset = 0; // Offset of the start of the negative ternary planes array
-    idx_t total_node_size = 0;     // Total size *before* final block alignment (used for allocation/memcpy)
+     idx_t neighbor_count_offset = 0; // Offset of the neighbor count (uint16_t) - Typically 0
+     idx_t node_vector_offset = 0;    // Offset of the start of the node's full vector data
+     idx_t neighbor_ids_offset = 0;   // Offset of the start of the neighbor row_t array
+     idx_t neighbor_pos_planes_offset = 0; // Offset of the start of the positive ternary planes array
+     idx_t neighbor_neg_planes_offset = 0; // Offset of the start of the negative ternary planes array
+     idx_t total_node_size = 0;     // Total size *before* final block alignment (used for allocation/memcpy)
+     idx_t ternary_edge_size_bytes = 0; // Calculated size of one neighbor's compressed ternary representation
 };
 
-
-//! Non-owning view of constant ternary bit planes.
+/**
+ * @brief Non-owning view of constant ternary bit planes.
+ */
 struct TernaryPlanesView {
-    const_data_ptr_t positive_plane = nullptr;
-	const_data_ptr_t negative_plane = nullptr;
-	idx_t dimensions = 0;
-    idx_t words_per_plane = 0; // Pre-calculated size based on dimensions
+    const_data_ptr_t positive_plane = nullptr; // Pointer to the positive plane data.
+    const_data_ptr_t negative_plane = nullptr; // Pointer to the negative plane data.
+    idx_t dimensions = 0;                      // Dimensionality of the vector these planes represent.
+    idx_t words_per_plane = 0;                 // Pre-calculated size (in uint64_t words) based on dimensions.
 
-    // Basic validity check
+    /**
+     * @brief Basic validity check.
+     * @return True if the view points to valid data structures, false otherwise.
+     */
     bool IsValid() const {
         return positive_plane != nullptr && negative_plane != nullptr && words_per_plane > 0;
     }
 };
 
-//! Non-owning view of mutable ternary bit planes.
+/**
+ * @brief Non-owning view of mutable ternary bit planes.
+ */
 struct MutableTernaryPlanesView {
-    data_ptr_t positive_plane = nullptr;
-	data_ptr_t negative_plane = nullptr;
-	idx_t dimensions = 0;
-    idx_t words_per_plane = 0; // Pre-calculated size based on dimensions
+    data_ptr_t positive_plane = nullptr; // Pointer to the mutable positive plane data.
+    data_ptr_t negative_plane = nullptr; // Pointer to the mutable negative plane data.
+    idx_t dimensions = 0;                // Dimensionality of the vector these planes represent.
+    idx_t words_per_plane = 0;           // Pre-calculated size (in uint64_t words) based on dimensions.
 
-    // Basic validity check
+    /**
+     * @brief Basic validity check.
+     * @return True if the view points to valid data structures, false otherwise.
+     */
     bool IsValid() const {
         return positive_plane != nullptr && negative_plane != nullptr && words_per_plane > 0;
     }
 };
 
-//! Non-owning view of a batch of contiguous ternary bit planes.
-//! Used to describe the layout of pre-encoded database vectors for search.
+/**
+ * @brief Non-owning view of a batch of contiguous ternary bit planes.
+ * @details Used to describe the layout of pre-encoded database vectors for search.
+ */
 struct TernaryPlaneBatchView {
-    const uint64_t* positive_planes_start = nullptr; //!< Pointer to the start of ALL positive planes
-    const uint64_t* negative_planes_start = nullptr; //!< Pointer to the start of ALL negative planes
-    size_t num_vectors = 0;                          //!< Number of vectors (N) in the batch
-    size_t words_per_plane = 0;                      //!< Pre-calculated words per single plane (from WordsPerPlane(dims))
+    const uint64_t* positive_planes_start = nullptr; // Pointer to the start of ALL positive planes for N vectors.
+    const uint64_t* negative_planes_start = nullptr; // Pointer to the start of ALL negative planes for N vectors.
+    size_t num_vectors = 0;                          // Number of vectors (N) in the batch.
+    size_t words_per_plane = 0;                      // Pre-calculated words per single plane (from WordsPerPlane(dims)).
 
-    //! Basic validity check
+    /**
+     * @brief Basic validity check.
+     * @return True if the batch view seems valid, false otherwise.
+     */
     bool IsValid() const {
         return positive_planes_start != nullptr &&
                negative_planes_start != nullptr &&
@@ -132,30 +160,51 @@ struct TernaryPlaneBatchView {
 };
 
 
+// --- Configuration Functions --- //
 
-
-// --- Configuration Functions ---
-// Provides functions to parse options, validate parameters, calculate sizes,
-// and determine the node block layout.
-
-// Parses options from the CREATE INDEX statement's WITH clause into a config struct.
+/**
+ * @brief Parses index options from the WITH clause into a config struct.
+ * @param options Map of option keys to values from CREATE INDEX.
+ * @return LMDiskannConfig struct populated with parsed or default values.
+ * @throws Exception if an unknown option is provided.
+ */
 LMDiskannConfig ParseOptions(const case_insensitive_map_t<Value> &options);
 
-// Validates the combination of parameters within the config struct.
+/**
+ * @brief Validates the combination of parameters within the config struct.
+ * @param config The configuration struct to validate.
+ * @throws Exception if validation fails (e.g., required parameters unset, incompatible values).
+ */
 void ValidateParameters(const LMDiskannConfig &config);
 
-// Calculates the byte size of different node vector types.
+/**
+ * @brief Gets the size in bytes for a given vector data type.
+ * @param type The LMDiskannVectorType enum value.
+ * @return Size in bytes.
+ * @throws InternalException for unsupported types.
+ */
 idx_t GetVectorTypeSizeBytes(LMDiskannVectorType type);
 
-// Calculates the byte size of the compressed ternary format per neighbor (one plane).
+/**
+ * @brief Gets the size in bytes for *one* compressed ternary plane (pos or neg) for one neighbor.
+ * @param dimensions The vector dimensionality.
+ * @return Size in bytes.
+ * @throws InternalException if dimensions is 0.
+ */
 idx_t GetTernaryPlaneSizeBytes(idx_t dimensions);
 
-// Calculates the internal layout offsets within a node block based on config.
-// Requires dimensions and node_vector_type to be set in the config.
+/**
+ * @brief Calculates the internal layout offsets within a node block based on config.
+ * @details Requires dimensions and node_vector_type to be set in the config.
+ * @param config The index configuration.
+ * @return NodeLayoutOffsets struct containing the calculated offsets and sizes.
+ */
 NodeLayoutOffsets CalculateLayoutInternal(const LMDiskannConfig &config);
 
 // --- Metadata Struct --- //
-// Holds all parameters persisted in the index metadata block.
+/**
+ * @brief Holds all parameters persisted in the index metadata block.
+ */
 struct LMDiskannMetadata {
     uint8_t format_version = 0;                  // Internal format version for compatibility
     LMDiskannMetricType metric_type = LMDiskannMetricType::UNKNOWN; // Distance metric used

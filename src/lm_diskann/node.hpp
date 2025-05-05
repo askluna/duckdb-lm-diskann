@@ -1,3 +1,7 @@
+/**
+ * @file node.hpp
+ * @brief Provides low-level accessors for reading and writing data within a node's disk block.
+ */
 #pragma once
 
 #include "duckdb.hpp"
@@ -9,54 +13,91 @@
 
 namespace duckdb {
 
-// --- Node Block Accessors (for LM-DiskANN with Ternary Neighbors) ---
-// Provides low-level, type-safe functions to read/write data within a raw node block buffer.
-// These functions rely on the pre-calculated NodeLayoutOffsets.
-namespace LMDiskannNodeAccessors {
+// Forward declare structs if not included via config.hpp
+// struct NodeLayoutOffsets;
+// struct TernaryPlanesView;
+// struct MutableTernaryPlanesView;
 
-    // --- Getters (const version) ---
+/**
+ * @brief Provides static methods for accessing data within a raw node block buffer.
+ * @details Uses a NodeLayoutOffsets struct to determine field locations.
+ *          Assumes TERNARY compressed neighbor representation.
+ */
+class LMDiskannNodeAccessors {
+public:
+    /**
+     * @brief Initializes a raw node block with default values (e.g., 0 neighbor count).
+     * @param node_block_ptr Pointer to the start of the node block buffer.
+     * @param block_size_bytes Total size of the block (used for potential clearing).
+     */
+    static void InitializeNodeBlock(data_ptr_t node_block_ptr, idx_t block_size_bytes);
 
-    // Reads the neighbor count (uint16_t) from the block.
-    uint16_t GetNeighborCount(const_data_ptr_t block_ptr);
+    /**
+     * @brief Gets the number of neighbors currently stored for the node.
+     * @param node_block_ptr Pointer to the start of the node block buffer.
+     * @return The neighbor count (uint16_t).
+     */
+    static uint16_t GetNeighborCount(const_data_ptr_t node_block_ptr);
 
-    // Returns a pointer to the start of the node's full vector data.
-    const_data_ptr_t GetNodeVector(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout);
+    /**
+     * @brief Sets the number of neighbors for the node.
+     * @param node_block_ptr Pointer to the start of the node block buffer.
+     * @param count The new neighbor count.
+     */
+    static void SetNeighborCount(data_ptr_t node_block_ptr, uint16_t count);
 
-    // Returns a pointer to the start of the neighbor row_t ID array.
-    const row_t* GetNeighborIDs(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout);
+    /**
+     * @brief Gets a constant pointer to the node's full vector data.
+     * @param node_block_ptr Pointer to the start of the node block buffer.
+     * @param layout The calculated layout offsets for the node block.
+     * @return Constant pointer to the vector data.
+     */
+    static const_data_ptr_t GetNodeVector(const_data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout);
 
-    // Returns a pointer to the start of the specified neighbor's positive ternary plane data.
-    // Note: No bounds check here for performance; caller must ensure neighbor_idx is valid ( < GetNeighborCount() ).
-    const_data_ptr_t GetNeighborPositivePlane(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes);
+    /**
+     * @brief Gets a mutable pointer to the node's full vector data.
+     * @param node_block_ptr Pointer to the start of the node block buffer.
+     * @param layout The calculated layout offsets for the node block.
+     * @return Mutable pointer to the vector data.
+     */
+    static data_ptr_t GetNodeVectorMutable(data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout);
 
-    // Returns a pointer to the start of the specified neighbor's negative ternary plane data.
-    // Note: No bounds check here for performance; caller must ensure neighbor_idx is valid.
-    const_data_ptr_t GetNeighborNegativePlane(const_data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes);
+    /**
+     * @brief Gets a constant pointer to the array of neighbor RowIDs.
+     * @param node_block_ptr Pointer to the start of the node block buffer.
+     * @param layout The calculated layout offsets for the node block.
+     * @return Constant pointer to the start of the RowID array.
+     */
+    static const row_t* GetNeighborIDsPtr(const_data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout);
 
-    // --- Setters (non-const version) ---
+    /**
+     * @brief Gets a mutable pointer to the array of neighbor RowIDs.
+     * @param node_block_ptr Pointer to the start of the node block buffer.
+     * @param layout The calculated layout offsets for the node block.
+     * @return Mutable pointer to the start of the RowID array.
+     */
+    static row_t* GetNeighborIDsPtrMutable(data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout);
 
-    // Writes the neighbor count (uint16_t) to the block.
-    void SetNeighborCount(data_ptr_t block_ptr, uint16_t count);
+    /**
+     * @brief Gets a view of the compressed ternary planes for a specific neighbor.
+     * @param node_block_ptr Pointer to the start of the node block buffer.
+     * @param layout The calculated layout offsets for the node block.
+     * @param neighbor_idx The index (0 to R-1) of the neighbor.
+     * @param dimensions The dimensionality of the vectors.
+     * @return A TernaryPlanesView pointing to the neighbor's planes.
+     */
+    static TernaryPlanesView GetNeighborTernaryPlanes(const_data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout, uint16_t neighbor_idx, idx_t dimensions);
 
-    // Returns a writable pointer to the start of the node's full vector data.
-    data_ptr_t GetNodeVectorMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout);
+    /**
+     * @brief Gets a mutable view of the compressed ternary planes for a specific neighbor.
+     * @param node_block_ptr Pointer to the start of the node block buffer.
+     * @param layout The calculated layout offsets for the node block.
+     * @param neighbor_idx The index (0 to R-1) of the neighbor.
+     * @param dimensions The dimensionality of the vectors.
+     * @return A MutableTernaryPlanesView pointing to the neighbor's planes.
+     */
+    static MutableTernaryPlanesView GetNeighborTernaryPlanesMutable(data_ptr_t node_block_ptr, const NodeLayoutOffsets &layout, uint16_t neighbor_idx, idx_t dimensions);
 
-    // Returns a writable pointer to the start of the neighbor row_t ID array.
-    row_t* GetNeighborIDsMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout);
-
-    // Returns a writable pointer to the start of the specified neighbor's positive ternary plane data.
-    // Note: No bounds check here for performance; caller must ensure neighbor_idx is valid.
-    data_ptr_t GetNeighborPositivePlaneMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes);
-
-    // Returns a writable pointer to the start of the specified neighbor's negative ternary plane data.
-    // Note: No bounds check here for performance; caller must ensure neighbor_idx is valid.
-    data_ptr_t GetNeighborNegativePlaneMutable(data_ptr_t block_ptr, const NodeLayoutOffsets& layout, uint32_t neighbor_idx, idx_t plane_size_bytes);
-
-    // --- Initialization Helper ---
-
-    // Zeroes out a block and sets initial neighbor count to 0.
-    void InitializeNodeBlock(data_ptr_t block_ptr, idx_t block_size);
-
-} // namespace LMDiskannNodeAccessors
+};
 
 } // namespace duckdb
