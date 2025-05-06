@@ -1,0 +1,84 @@
+---
+description: 
+globs: src/**/*.hpp,src/**/*.cpp,src/**/*.h
+alwaysApply: false
+---
+# Guidelines
+
+## 1. General Philosophy
+- **Clarity & Readability First:** Prioritize self-documenting code.
+- **Safety:** Actively use C++20 features for memory and type safety.
+- **Modernity:** Embrace C++20 for expressiveness and efficiency.
+- **Performance:** Be mindful of performance, especially in a DuckDB context. Use move semantics, `std::string_view`, `std::span`.
+- **Modularity:** Design components with clear responsibilities. Well-structured code (e.g., like seen in `config.cpp` with its clear separation of concerns for parsing, validation, and calculation) is easier to test and maintain.
+
+## 2. Naming and Formatting
+- **Verbose Names:** Use descriptive, unambiguous names for all symbols (variables, functions, classes, etc.).
+- **Case Conventions:** (Define and adhere to a consistent style, e.g., `PascalCase` for types, `snake_case` for variables/functions, aligning with DuckDB's common practices is good).
+- **ClangFormat:** Use `ClangFormat` with a project-defined `.clang-format` file for consistent style.
+
+## 3. Documentation (Doxygen)
+- **Style:**
+    - Use `/** ... */` for multi-line docs (classes, functions).
+    - Use `///` for single-line docs (members).
+    - **NO `//!` style comments.**
+- **Completeness:**
+    - Document all public/protected interfaces: classes, structs, functions, enums.
+    - Document parameters (`@param`), return values (`@return`).
+    - **Comment ALL properties/member variables.**
+    - Use `@brief` for summaries.
+    - Use `@file` in header files.
+- **Clarity:** Write clear, concise, and accurate documentation.
+
+## 4. Functions and APIs
+- **Parameter Grouping:** **If a function/constructor has MORE THAN 3 parameters, group them into a `struct` or `class`.**
+    - *Example:* The `LMDiskannIndex` constructor should use a parameter struct.
+- **Return Values:**
+    - `std::optional<T>` for values that might legitimately be absent.
+    - Exceptions for errors (aligning with DuckDB).
+- **`const` Correctness:** Use `const` strictly and correctly.
+- **Small, Testable Functions:**
+    - Decompose complex operations into smaller, focused functions.
+    - Aim for functions with clear inputs/outputs and minimal side effects.
+    - Passing structs for parameters can help define clear boundaries and improve testability (again, `config.cpp` serves as a good example of structured code that is inherently more testable).
+
+## 5. Memory Management & Resource Ownership
+- **RAII:** Fundamental. Resources owned by objects whose destructors release them.
+- **Smart Pointers:**
+    - `std::unique_ptr`: Default for exclusive ownership. Create with `std::make_unique`.
+    - `std::shared_ptr`: Only for explicit shared ownership. Create with `std::make_shared`. Beware of cycles (use `std::weak_ptr`).
+    - Avoid raw `new`/`delete` outside low-level resource managers.
+- **Non-Owning Views (C++20):**
+    - `std::string_view`: For non-owning string parameters. Ensure lifetime of underlying data.
+    - `std::span<T>`: For non-owning views of contiguous memory (arrays, vector data). Provides bounds safety.
+- **DuckDB Allocators:** Use DuckDB's allocators when memory is managed by/passed to DuckDB core.
+
+## 6. Key C++20 (and C++11/14/17) Features
+- **General:**
+    - `auto`: Use where it improves readability (e.g., complex iterators) without obscuring type.
+    - Range-Based `for` Loops: Preferred for iteration.
+    - Lambda Expressions: For concise inline functions.
+    - `nullptr`: Always use over `NULL` or `0`.
+- **C++17:**
+    - Structured Bindings: For decomposing pairs/tuples/structs.
+    - `if constexpr`: For compile-time conditional logic in templates.
+    - `std::optional<T>`, `std::variant<Types...>`: For type-safe optional values and unions.
+- **C++20 - Prioritize these:**
+    - **`std::span<T>`:** For safer, generic operations on contiguous data.
+    - **`std::format`:** For type-safe, modern string formatting.
+    - **Concepts:** To constrain template parameters for clearer errors and interfaces.
+    - **Ranges:** For expressive data manipulation (e.g., `std::views::filter`, `std::views::transform`).
+    - Three-Way Comparison (`operator<=>`): To simplify comparison operator definitions.
+    - `consteval`, `constinit`: For stricter compile-time evaluation/initialization.
+
+## 7. Error Handling
+- **Exceptions:** Primary mechanism, aligning with DuckDB. Throw specific, descriptive exceptions.
+- **`ErrorData` (DuckDB):** Use for DuckDB API functions requiring structured error returns.
+- **Assertions (`D_ASSERT`):** For internal invariant checks during development.
+
+## 8. Tooling
+- **Compiler:** Clang, with C++20 standard enabled (`-std=c++20`).
+- **Static Analysis (`Clang-Tidy`):** Integrate into build/editor. Configure relevant checks.
+- **Formatter (`ClangFormat`):** Enforce consistent style.
+
+This rule should provide the AI with consistent guidance when working on your C++ code. Remember you can create this file as `.cursor/rules/cpp_guidelines.mdc` in your project's root directory.

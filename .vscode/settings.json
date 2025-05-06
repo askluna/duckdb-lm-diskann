@@ -1,6 +1,4 @@
 {
-  // --- Other settings may already be here ---
-
   // Make sure GEN=ninja is set for terminals if you still need the 'make' wrapper sometimes
   // (Choose the correct platform: osx, linux, or windows)
   "terminal.integrated.env.osx": {
@@ -10,32 +8,23 @@
       "GEN": "ninja"
   },
 
-  // --- CMake Tools Settings ---
-
   // 1. Set the CMake Source Directory:
-  //    Point this to the directory containing the MAIN DuckDB CMakeLists.txt.
-  //    *** YOU MUST REPLACE 'path/to/your/duckdb/source' ***
-  //    with the actual relative path from your project's root folder
-  //    (duckdb-lm-diskann) to the duckdb source code (e.g., "duckdb",
-  //    "../duckdb", "libs/duckdb", "submodules/duckdb", etc.).
   "cmake.sourceDirectory": "${workspaceFolder}/duckdb",
 
   // 2. Pass Configuration Arguments to CMake:
-  //    Tell the main DuckDB build system where your extension's configuration lives.
   "cmake.configureArgs": [
-      // Define DUCKDB_EXTENSION_CONFIGS pointing to your extension's root folder
-      // (${workspaceFolder} refers to the root of your opened project, duckdb-lm-diskann)
       "-DUCKDB_EXTENSION_CONFIGS=${workspaceFolder}",
       "-DCMAKE_CXX_STANDARD=20",
       "-DCMAKE_CXX_STANDARD_REQUIRED=TRUE",
+      
+      // Set the macOS SDK path (homebrew clang)
+      "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.4.sdk",
 
-      // Add any other specific defines your extension or the DuckDB build might need, e.g.:
-      // "-DBUILD_EXTENSIONS=my_extension_name", // (Check DuckDB build system specifics)
-      // "-DUSE_MY_FEATURE=ON"
+      // Disable deprecated literal operator warning for duckdb files
+      "-DCMAKE_CXX_FLAGS=-Wno-deprecated-literal-operator",
+
   ],
 
-  // 3. Optional: Specify the Build Directory:
-  //    It's often cleaner to keep the build output within your extension's folder.
   "cmake.buildDirectory": "${workspaceFolder}/build",
 
   // 4. Ensure Compile Commands are Exported (for clangd):
@@ -43,7 +32,20 @@
   //    is good practice if your kit/preset doesn't enforce it.
   "cmake.configureSettings": {
       "CMAKE_EXPORT_COMPILE_COMMANDS": "TRUE"
-  }
+  },
+  "[cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "[c]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "editor.formatOnSave": true,
+  "editor.formatOnType": true,
 
-  // --- End CMake Tools Settings ---
+  "clangd.fallbackFlags": [
+    "-std=c++20"
+  ],
+  "clangd.arguments": [
+    "--compile-commands-dir=build"
+  ]
 }
