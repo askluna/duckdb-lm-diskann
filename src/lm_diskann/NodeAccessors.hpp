@@ -1,5 +1,5 @@
 /**
- * @file LmDiskannNodeAccessors.hpp
+ * @file NodeAccessors.hpp
  * @brief Provides low-level accessors for reading and writing data within a
  * node's disk block.
  */
@@ -25,7 +25,7 @@ namespace duckdb {
  * @details Uses a NodeLayoutOffsets struct to determine field locations.
  *          Assumes TERNARY compressed neighbor representation.
  */
-class LmDiskannNodeAccessors {
+class NodeAccessors {
 public:
   /**
    * @brief Initializes a raw node block with default values (e.g., 0 neighbor

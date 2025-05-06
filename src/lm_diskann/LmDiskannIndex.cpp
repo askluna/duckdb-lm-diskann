@@ -8,8 +8,8 @@
 #include "LmDiskannIndex.hpp"
 
 // Include refactored component headers
-#include "LmDiskannNodeAccessors.hpp"
 #include "LmDiskannScanState.hpp" // For LmDiskannScanState
+#include "NodeAccessors.hpp"
 #include "config.hpp"
 #include "distance.hpp" // For distance/conversion functions
 #include "search.hpp"   // For PerformSearch

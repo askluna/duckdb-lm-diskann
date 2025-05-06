@@ -3,7 +3,7 @@ description:
 globs: src/**/*.hpp,src/**/*.cpp,src/**/*.h
 alwaysApply: false
 ---
-# Guidelines
+# Guidelines c++
 
 ## 1. General Philosophy
 - **Clarity & Readability First:** Prioritize self-documenting code.
@@ -14,7 +14,8 @@ alwaysApply: false
 
 ## 2. Naming and Formatting
 - **Verbose Names:** Use descriptive, unambiguous names for all symbols (variables, functions, classes, etc.).
-- **Case Conventions:** (Define and adhere to a consistent style, e.g., `PascalCase` for types, `snake_case` for variables/functions, aligning with DuckDB's common practices is good).
+- **Case Conventions:** Aadhere to the consistent style, e.g., `PascalCase` for classes.  `snake_case` for variables/functions
+- **File Conventions:** Aadhere to the consistent style, e.g., `PascalCase` for class files.  `snake_case` for other files.
 - **ClangFormat:** Use `ClangFormat` with a project-defined `.clang-format` file for consistent style.
 
 ## 3. Documentation (Doxygen)
