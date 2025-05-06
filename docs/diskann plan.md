@@ -115,7 +115,7 @@ This plan details rewriting the `vectordiskann.c` implementation (LM-DiskANN in 
 
 To keep the implementation modular and clear, we propose the following file split under the DuckDB VSS extension (`src/`):
 
-* **`lm_diskann_index.hpp / lm_diskann_index.cpp`**:
+* **`LmDiskannIndex.hpp / LmDiskannIndex.cpp`**:
   Defines the `LMDiskANNIndex` class and related types. Contains the entry-point methods for *index lifecycle*: `Create()`, `Open()`, `Drop()`, plus `Insert()`, `Delete()`, and methods to register the index type with DuckDB. This file wraps DuckDB storage calls (allocators) and high-level control flow.
 
 * **`lm_diskann_search.cpp`**:
@@ -130,7 +130,7 @@ To keep the implementation modular and clear, we propose the following file spli
 * **`lm_diskann_bind.cpp`**:
   Integration glue. Contains the extension load/unload functions (e.g. `LMDiskANN_Init`) which register the index type and any SQL functions. Also the physical operator implementation for the DiskANN scan node (if not inlined in the index class). It wires our code into DuckDB’s extension framework.
 
-Within these files, we will clearly separate interface (DuckDB-facing) from implementation (C-style algorithm). For example, `lm_diskann_index.cpp` may contain the `sqlInterface_*` functions called by the DuckDB parser (similar to how `hnsw_index.cpp` has them), and call into the C++ class methods.
+Within these files, we will clearly separate interface (DuckDB-facing) from implementation (C-style algorithm). For example, `LmDiskannIndex.cpp` may contain the `sqlInterface_*` functions called by the DuckDB parser (similar to how `hnsw_index.cpp` has them), and call into the C++ class methods.
 
 ## 4. Type and Interface Mappings
 

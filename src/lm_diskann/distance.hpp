@@ -4,22 +4,22 @@
  */
 #pragma once
 
-#include "config.hpp" // Include config for TernaryPlanesView and LMDiskannMetricType
+#include "config.hpp" // Include config for TernaryPlanesView and LmDiskannMetricType
 #include "duckdb/common/types.hpp" // For idx_t
-#include "duckdb/storage/data_pointer.hpp" // For const_data_ptr_t
 #include "duckdb/common/types/vector.hpp"
+#include "duckdb/storage/data_pointer.hpp" // For const_data_ptr_t
 
 #include <cstdint>
 
 // Forward declarations no longer needed as config.hpp is included
 // namespace duckdb {
-//     enum class LMDiskannMetricType : uint8_t;
+//     enum class LmDiskannMetricType : uint8_t;
 // }
 
 namespace duckdb {
 
 // Forward declare config struct if not fully included
-// struct LMDiskannConfig;
+// struct LmDiskannConfig;
 
 // --- Exact Distance Calculation --- //
 
@@ -32,29 +32,31 @@ namespace duckdb {
  * @param metric_type The metric (L2, COSINE, IP) to use.
  * @return The calculated distance.
  */
-float ComputeExactDistanceFloat(const float *a_ptr,
-                                const float *b_ptr,
+float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
                                 idx_t dimensions,
-                                LMDiskannMetricType metric_type);
+                                LmDiskannMetricType metric_type);
 
 // --- Distance / Similarity Calculation --- //
 
 /**
- * @brief Computes the approximate SIMILARITY between a full query vector (float)
- *        and a compressed TERNARY neighbor vector using its separate planes.
- * @details Returns a raw similarity score (higher is better). Used during graph traversal.
- *          Implementation requires ternary_quantization.hpp.
+ * @brief Computes the approximate SIMILARITY between a full query vector
+ * (float) and a compressed TERNARY neighbor vector using its separate planes.
+ * @details Returns a raw similarity score (higher is better). Used during graph
+ * traversal. Implementation requires ternary_quantization.hpp.
  * @param query_float_ptr Pointer to the query float vector.
- * @param neighbor_planes A view containing pointers to the neighbor's ternary planes and dimensions.
- * @param dimensions Dimensionality of the vectors (must match neighbor_planes.dimensions).
+ * @param neighbor_planes A view containing pointers to the neighbor's ternary
+ * planes and dimensions.
+ * @param dimensions Dimensionality of the vectors (must match
+ * neighbor_planes.dimensions).
  * @return The calculated similarity score.
  */
 float ComputeApproxSimilarityTernary(const float *query_float_ptr,
-                                     const TernaryPlanesView& neighbor_planes,
+                                     const TernaryPlanesView &neighbor_planes,
                                      idx_t dimensions);
 
 /**
- * @brief Computes the exact distance between two vectors based on the configured metric.
+ * @brief Computes the exact distance between two vectors based on the
+ * configured metric.
  * @tparam T_QUERY Type of the query vector elements (likely float).
  * @tparam T_NODE Type of the node vector elements (e.g., float, int8_t).
  * @param query_ptr Pointer to the query vector data.
@@ -62,28 +64,37 @@ float ComputeApproxSimilarityTernary(const float *query_float_ptr,
  * @param config The index configuration containing dimensions and metric type.
  * @return The calculated distance.
  */
-template<typename T_QUERY, typename T_NODE>
-float CalculateDistance(const T_QUERY *query_ptr, const T_NODE *node_vector_ptr, const LMDiskannConfig& config);
+template <typename T_QUERY, typename T_NODE>
+float CalculateDistance(const T_QUERY *query_ptr, const T_NODE *node_vector_ptr,
+                        const LmDiskannConfig &config);
 
 /**
- * @brief Computes the approximate distance using the query vector and a compressed neighbor vector.
+ * @brief Computes the approximate distance using the query vector and a
+ * compressed neighbor vector.
  * @details Assumes the compressed neighbor is in TERNARY format.
- *          Internally calls ComputeApproxSimilarityTernary and converts similarity to distance if needed.
+ *          Internally calls ComputeApproxSimilarityTernary and converts
+ * similarity to distance if needed.
  * @param query_ptr Pointer to the query vector data (float).
- * @param compressed_neighbor_ptr Pointer to the start of the compressed neighbor data (ternary planes).
+ * @param compressed_neighbor_ptr Pointer to the start of the compressed
+ * neighbor data (ternary planes).
  * @param config The index configuration containing dimensions and metric type.
  * @return The calculated approximate distance.
  */
-float CalculateApproxDistance(const float *query_ptr, const_data_ptr_t compressed_neighbor_ptr, const LMDiskannConfig& config);
+float CalculateApproxDistance(const float *query_ptr,
+                              const_data_ptr_t compressed_neighbor_ptr,
+                              const LmDiskannConfig &config);
 
 /**
  * @brief Compresses a vector into the TERNARY format for edge storage.
  * @param input_vector Pointer to the input vector data (float).
- * @param output_compressed_vector Pointer to the output buffer for the compressed data.
+ * @param output_compressed_vector Pointer to the output buffer for the
+ * compressed data.
  * @param config The index configuration (used for dimensions).
  * @return True if compression was successful, false otherwise.
  */
-bool CompressVectorForEdge(const float* input_vector, data_ptr_t output_compressed_vector, const LMDiskannConfig& config);
+bool CompressVectorForEdge(const float *input_vector,
+                           data_ptr_t output_compressed_vector,
+                           const LmDiskannConfig &config);
 
 /**
  * @brief Converts a vector of a specific type (e.g., int8_t) to float.
@@ -92,10 +103,12 @@ bool CompressVectorForEdge(const float* input_vector, data_ptr_t output_compress
  * @param output_vector Pointer to the output float vector buffer.
  * @param dimensions The number of dimensions.
  */
-template<typename T>
-void ConvertToFloat(const T* input_vector, float* output_vector, idx_t dimensions);
+template <typename T>
+void ConvertToFloat(const T *input_vector, float *output_vector,
+                    idx_t dimensions);
 
 // Explicit instantiation for int8_t needed if definition is in .cpp
-// extern template void ConvertToFloat<int8_t>(const int8_t* input_vector, float* output_vector, idx_t dimensions);
+// extern template void ConvertToFloat<int8_t>(const int8_t* input_vector,
+// float* output_vector, idx_t dimensions);
 
 } // namespace duckdb

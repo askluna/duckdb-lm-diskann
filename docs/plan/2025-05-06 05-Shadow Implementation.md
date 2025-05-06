@@ -56,10 +56,10 @@ The development of this project will be executed iteratively, progressing throug
    - Filtering based on `allowed_ids` (predicate pushdown) will not be incorporated in this MVP; the search will operate over the entire graph.
    - Complex MVCC checks are deferred. All data within the statically built `graph.lmd` is assumed to be visible and valid for the purposes of any query in this MVP.
 7. **DuckDB Integration (Core API Hooks):**
-   - Implementation of parsing logic for the `CREATE INDEX ... USING LM_DISKANN (...)` SQL syntax. This will likely be managed via an `LMDiskannConfig::ParseOptions` method or an equivalent mechanism within the extension framework, responsible for interpreting `WITH` clause parameters.
-   - Implementation of the `LMDiskannIndex` constructor. This constructor will handle index creation parameters (e.g., column to index, distance metric, graph construction parameters like `R` and `L_insert`) and will trigger the serial build process. Parameter handling will conform to C++ guidelines; for instance, if the constructor requires more than three parameters, these will be grouped into a dedicated options structure.
-   - Implementation of a basic `LMDiskannIndex::Scan` method. This method will invoke the V0 `PerformSearch` function and will be responsible for returning the top-K results. A crucial part of this step is mapping the internal `node_id` values (returned by the search) back to base table `row_id` values, which is achieved by querying the `lmd_lookup` table.
-   - Implementation of the `LMDiskannIndex::CommitDrop` method to ensure the clean and complete removal of the index directory and all associated files when a `DROP INDEX` command is executed.
+   - Implementation of parsing logic for the `CREATE INDEX ... USING LM_DISKANN (...)` SQL syntax. This will likely be managed via an `LmDiskannConfig::ParseOptions` method or an equivalent mechanism within the extension framework, responsible for interpreting `WITH` clause parameters.
+   - Implementation of the `LmDiskannIndex` constructor. This constructor will handle index creation parameters (e.g., column to index, distance metric, graph construction parameters like `R` and `L_insert`) and will trigger the serial build process. Parameter handling will conform to C++ guidelines; for instance, if the constructor requires more than three parameters, these will be grouped into a dedicated options structure.
+   - Implementation of a basic `LmDiskannIndex::Scan` method. This method will invoke the V0 `PerformSearch` function and will be responsible for returning the top-K results. A crucial part of this step is mapping the internal `node_id` values (returned by the search) back to base table `row_id` values, which is achieved by querying the `lmd_lookup` table.
+   - Implementation of the `LmDiskannIndex::CommitDrop` method to ensure the clean and complete removal of the index directory and all associated files when a `DROP INDEX` command is executed.
 8. **Basic Metadata Persistence (`Serialize`/`Deserialize` - V0 Implementation):**
    - `Serialize`: Implementation of the serialization hook to write essential metadata to DuckDB's checkpoint stream. This will include the relative path to the index directory, core configuration parameters (such as vector dimensions, `R`, `L_insert`, `alpha`, and the chosen distance metric), and the format version of the index files.
    - `Deserialize`: Implementation of the deserialization hook to read this metadata during database startup. Rudimentary validation procedures will be implemented at this stage, including checks for the existence of the index directory and files, and verification of the `graph.lmd` header (magic number, format version compatibility), as suggested in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.3, "Storage and Block Format Versioning."
@@ -107,7 +107,7 @@ The development of this project will be executed iteratively, progressing throug
 5. **`ReadNodeBlock` Enhancements (V1 Specification):**
    - Implementation of an updated lookup hierarchy for retrieving `NodeBlock`s: the function will first check the In-Memory LRU Cache, then query the `__lmd_blocks` table (via `IndexStoreManager`), and finally, if not found in either, read from the `graph.lmd` file.
    - Incorporation of basic MVCC logic: The function will compare the `NodeBlock::commit_epoch` (retrieved from the block data) with a query's snapshot epoch. For this MVP, the concept and provision of a query's snapshot epoch may also be simplified (e.g., using the current provisional epoch counter).
-6. **Insertion Logic (`LMDiskannIndex::Insert` - V1 Specification):**
+6. **Insertion Logic (`LmDiskannIndex::Insert` - V1 Specification):**
    - The processing of new vectors (and their corresponding nodes) will entail the following sequence:
      - Creation of a new `NodeBlock` instance within the LRU cache; this block is immediately marked as dirty.
      - Performance of a neighbor search for the new vector, utilizing the updated `ReadNodeBlock` function (which now incorporates cache and shadow lookups).
@@ -152,7 +152,7 @@ The development of this project will be executed iteratively, progressing throug
    - Following the successful sync of `graph.lmd`, the merge process will atomically (within a single transaction on `diskann_store.duckdb`):
      - Clear the successfully merged entries from the `__lmd_blocks` table.
      - Update relevant `index_metadata` entries, such as incrementing a `merge_sequence_number` to track merge progress and consistency.
-2. **Deletion Logic (`LMDiskannIndex::Delete` - V1 Specification):**
+2. **Deletion Logic (`LmDiskannIndex::Delete` - V1 Specification):**
    - Implementation of procedures for the creation and management of the `tombstoned_nodes` table within `diskann_store.duckdb`, as specified in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.2. This table will store `node_id`s of logically deleted nodes and their `deletion_epoch`.
    - When a `row_id` is targeted for deletion from the base table:
      - Its corresponding `node_id` will be retrieved from `lmd_lookup` and subsequently added to the `tombstoned_nodes` table.
@@ -164,7 +164,7 @@ The development of this project will be executed iteratively, progressing throug
    - Furthermore, it will consult the `tombstoned_nodes` table (via the `IndexStoreManager`). This check is particularly important if a block is read from `graph.lmd` (as this version might predate the logical deletion) or if its own `tombstone` flag is not definitive (e.g., if the block version in `graph.lmd` is older than the `deletion_epoch` in `tombstoned_nodes`). This can also serve as a primary check for deleted status before fully deserializing a block.
 4. **Search Logic Enhancements (`PerformSearch` - V1 Specification):**
    - The core search algorithm (`PerformSearch`) will be modified to correctly interpret the results from the enhanced `ReadNodeBlock` function. Specifically, it will skip or ignore any nodes that are identified as tombstones, ensuring they are not considered as candidates or used for further graph traversal.
-5. **Basic Vacuum Operation (`LMDiskannIndex::Vacuum` - V1 Specification):**
+5. **Basic Vacuum Operation (`LmDiskannIndex::Vacuum` - V1 Specification):**
    - The `VACUUM INDEX` command (or an equivalent internal maintenance trigger) will, as a primary action, initiate a merge operation if the `__lmd_blocks` table has grown to a significant size or contains a substantial number of unmerged changes.
    - It will implement the "Simpler Compaction Strategy for V1," as detailed in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.2. For MVP 2, this strategy primarily involves:
      - Focusing on rudimentary free list management for `graph.lmd` slots. The merge process, when it encounters `NodeBlock`s from `__lmd_blocks` that correspond to `node_id`s already marked in `tombstoned_nodes`, will identify these slots in `graph.lmd` as free. This free list information will be persisted in `index_metadata`. Subsequent new node insertions (which are integrated into `graph.lmd` via the merge process) will then attempt to reuse these freed slots before appending to the end of the file.
@@ -199,19 +199,19 @@ The development of this project will be executed iteratively, progressing throug
    - The Exploration Heap (EH) will store promising candidate nodes for graph traversal, irrespective of their immediate presence in the `allowed_ids` set, thereby allowing the search to navigate through non-matching nodes to reach valid targets.
    - Implement a refined stopping condition for the search loop, potentially based on a comparison of the best candidate in EH versus the worst in a full RH (e.g., `dist(EH_top) > gamma * dist(RH_kth)`).
 2. **Interface for `allowed_ids` Set Consumption:**
-   - Define the precise programmatic interface and data structures by which the `LMDiskannIndex::Scan` method receives the `allowed_ids` set from DuckDB's query planner. This could involve, for example, a `duckdb::SelectionVector`, a `duckdb::Validities` mask, or another optimized representation provided by DuckDB, as discussed in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.1, under "Memory Footprint of `allowed_ids`."
+   - Define the precise programmatic interface and data structures by which the `LmDiskannIndex::Scan` method receives the `allowed_ids` set from DuckDB's query planner. This could involve, for example, a `duckdb::SelectionVector`, a `duckdb::Validities` mask, or another optimized representation provided by DuckDB, as discussed in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.1, under "Memory Footprint of `allowed_ids`."
    - Implement efficient algorithms for checking membership within the received `allowed_ids` structure during the search process.
 3. **Configurable `L_search` Parameter with Runtime Warnings:**
    - Establish `L_search` (the exploration beam width) as a configurable session parameter within DuckDB, thereby allowing users or administrators to adjust the breadth of the search based on workload characteristics or performance requirements.
    - Implement a runtime warning mechanism, potentially using `duckdb::ClientContext::Warn`, that is triggered if a filtered search operation (i.e., one with an active `allowed_ids` set) exhausts its `L_search` budget but the Results Heap (RH) contains fewer than the requested `K` qualified candidates. This feedback mechanism is proposed in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.1, under "Exploration Budget (`L_search` / `ef_search`)."
 4. **Basic Cost Model for Optimizer Integration:**
-   - Implement the `LMDiskannIndex::ConstructCost` method (or an equivalent API provided by DuckDB for index cost estimation). This method will provide the query optimizer with an estimated cost for performing a scan using this index.
+   - Implement the `LmDiskannIndex::ConstructCost` method (or an equivalent API provided by DuckDB for index cost estimation). This method will provide the query optimizer with an estimated cost for performing a scan using this index.
    - The V1 Cost Model will be based on parameters such as `L_search_effective` (an estimate of unique nodes visited), `R_avg` (average effective graph degree), and a `Penalty_factor_selectivity`. This penalty factor will be applied when an `allowed_ids` set is active to account for the potentially increased search effort in sparse subgraphs, as outlined in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.4.
 
 **Implementation Tasks:**
 
 - Development of Task IV.2 (`PerformSearch` - specifically, the implementation of the dual-heap search strategy and the integration of `allowed_ids` filtering logic within the search loop).
-- Definition and implementation of the interface for receiving and efficiently processing the `allowed_ids` set within the `LMDiskannScanState` structure and the `PerformSearch` function.
+- Definition and implementation of the interface for receiving and efficiently processing the `allowed_ids` set within the `LmDiskannScanState` structure and the `PerformSearch` function.
 - Implementation of the configurable `L_search` parameter, including mechanisms for setting it at the session level, and the associated runtime warning logic for underpopulated Results Heaps in filtered searches.
 - Development of Task VI (Optimizer Integration - specifically, the implementation of the basic cost model within the `ConstructCost` method or equivalent).
 
@@ -238,7 +238,7 @@ The development of this project will be executed iteratively, progressing throug
    - Systematically evaluate whether the default `IndexLock` (a coarse-grained mutex provided by `BoundIndex`) offers sufficient concurrency for high-throughput DML workloads.
    - If performance benchmarks indicate that `IndexLock` is a significant contention point, investigate, design, and potentially implement finer-grained locking strategies. Examples could include per-node locks for `NodeBlock` modifications, or sharded locks for shared data structures like the LRU cache or the Ring Buffer.
 4. **Robust Crash Recovery and Validation Logic:**
-   - Implement thorough and multi-faceted validation procedures within `LMDiskannIndex::Deserialize` (or an associated `LoadFromStorage` method invoked during index loading). This validation must include:
+   - Implement thorough and multi-faceted validation procedures within `LmDiskannIndex::Deserialize` (or an associated `LoadFromStorage` method invoked during index loading). This validation must include:
      - Comparison of the checkpointed `merge_sequence_number` (read from DuckDB's main checkpoint data) with the `merge_sequence_number` stored in `diskann_store.duckdb.index_metadata`.
      - Verification of the consistency of other critical metadata items (e.g., dimensions, block size) between the checkpointed data and the index's own metadata store.
      - Definition and implementation of a clear, predictable, and safe strategy for handling detected inconsistencies (e.g., marking the index as invalid and requiring a mandatory rebuild from base table data to ensure correctness), as discussed in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.3, "Snapshot Isolation."

@@ -32,7 +32,7 @@ alwaysApply: false
 
 ## 4. Functions and APIs
 - **Parameter Grouping:** **If a function/constructor has MORE THAN 3 parameters, group them into a `struct` or `class`.**
-    - *Example:* The `LMDiskannIndex` constructor should use a parameter struct.
+    - *Example:* The `LmDiskannIndex` constructor should use a parameter struct.
 - **Return Values:**
     - `std::optional<T>` for values that might legitimately be absent.
     - Exceptions for errors (aligning with DuckDB).

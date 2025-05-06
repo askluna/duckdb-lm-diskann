@@ -16,7 +16,7 @@
 
 `## Reasoning:`
 -   **Relevant Code Blocks/Files & Importance:**
-    -   `src/lm_diskann/lm_diskann_index.cpp/hpp`: Core class integrating with `duckdb::BoundIndex`. Shows current structure, API usage (Append, Delete, Scan, Serialize, etc.), use of config/state. Crucial for understanding integration points.
+    -   `src/lm_diskann/LmDiskannIndex.cpp/hpp`: Core class integrating with `duckdb::BoundIndex`. Shows current structure, API usage (Append, Delete, Scan, Serialize, etc.), use of config/state. Crucial for understanding integration points.
     -   `src/lm_diskann/storage.cpp/hpp`: Implements `LoadFromStorage`, `PersistMetadata`. Currently uses `FixedSizeAllocator`. Key area for change if moving to external storage.
     -   `src/lm_diskann/config.cpp/hpp`: Handles `CREATE INDEX ... WITH` options, layout calculations. Defines index parameters.
     -   `src/lm_diskann/search.cpp/hpp`: Implements the ANN search logic (beam search). Needs to interact with potential caching layers and handle filtering parameters (`k`, threshold).
@@ -43,7 +43,7 @@
 
 -   **Tradeoffs:** The core tradeoff discussed throughout the documents and which needs emphasis is **Integration vs. Control**. Using DuckDB primitives (like `FixedSizeAllocator`) offers better integration (checkpointing, block I/O) but sacrifices memory control (non-evictable buffers). External management gives memory control but sacrifices integration (transactions, recovery). Strategy A is presented as the best compromise, leaning towards external control while using minimal integration points (`Serialize/Deserialize`, `FileSystem`) for coordination. Another key tradeoff is **Consistency vs. Complexity/Performance**, especially evident in comparing Strategies A, B, and C.
 
--   **Connections:** Connect the current implementation (`storage.cpp` using `FixedSizeAllocator`) to the problem described in `Issues...md` and the DuckDB source (`fixed_size_allocator.cpp`, `buffer_manager.cpp`). Connect the proposed Strategy A to the necessary changes in `storage.cpp` (replacing `FixedSizeAllocator` with `FileSystem` calls and custom caching) and the use of `Index::Serialize/Deserialize` hooks from `bound_index.hpp`. Connect the filtering discussion to the design of `search.cpp` and the `Scan` method in `lm_diskann_index.cpp`.
+-   **Connections:** Connect the current implementation (`storage.cpp` using `FixedSizeAllocator`) to the problem described in `Issues...md` and the DuckDB source (`fixed_size_allocator.cpp`, `buffer_manager.cpp`). Connect the proposed Strategy A to the necessary changes in `storage.cpp` (replacing `FixedSizeAllocator` with `FileSystem` calls and custom caching) and the use of `Index::Serialize/Deserialize` hooks from `bound_index.hpp`. Connect the filtering discussion to the design of `search.cpp` and the `Scan` method in `LmDiskannIndex.cpp`.
 
 ------
 # Response
@@ -62,7 +62,7 @@ The primary goal is to implement the LM-DiskANN algorithm as a custom index type
     *   Node block layout calculation (`CalculateLayoutInternal`) is implemented, currently assuming an **implicit Ternary** format for compressed neighbors. Only `FLOAT32` and `INT8` vector types are supported.
     *   Low-level node accessors (`lm_diskann_node`) are defined.
     *   Distance functions (`Cosine`, `Inner Product`) are implemented (`distance.cpp`), including an approximate distance calculation assuming Ternary neighbors. *L2 distance was removed due to perceived incompatibility with the Ternary assumption.*
-    *   The core `LMDiskannIndex` class inherits from `duckdb::BoundIndex` (`lm_diskann_index.hpp/cpp`).
+    *   The core `LmDiskannIndex` class inherits from `duckdb::BoundIndex` (`LmDiskannIndex.hpp/cpp`).
     *   Beam search logic (`PerformSearch` in `search.cpp`) is structured.
     *   Core graph operations like `Insert`, `FindAndConnectNeighbors`, `RobustPrune`, `Delete` (in-memory map removal), `InitializeScan`, and `Scan` are implemented at a basic level.
 *   **Persistence (Current Approach):**
@@ -87,7 +87,7 @@ The most significant challenge is DuckDB's current memory management strategy fo
 
 Integrating the ANN index scan with SQL queries requires handling filters:
 
-*   **`LIMIT k` (Top-K):** Essential for ANN search. The `LIMIT k` must be pushed down to the `LMDiskannIndex::Scan` operation so the graph traversal knows when to stop efficiently.
+*   **`LIMIT k` (Top-K):** Essential for ANN search. The `LIMIT k` must be pushed down to the `LmDiskannIndex::Scan` operation so the graph traversal knows when to stop efficiently.
 *   **Pre-Filtering (Candidate ROWIDs):** Applying metadata filters *before* the ANN search (e.g., `WHERE metadata_col = 'X' ORDER BY distance(...) LIMIT k`). This requires the index scan to accept a set of candidate ROWIDs. However, this often severely degrades graph-based ANN performance, as the algorithm relies on the full graph structure. It might force a slow, brute-force scan over the vectors corresponding to the filtered ROWIDs read from disk.
 *   **Post-Filtering (Larger `k'`):** Applying metadata filters *after* an initial ANN search (e.g., `SELECT ... FROM (SELECT rowid FROM my_table ORDER BY distance(...) LIMIT 100) candidates JOIN my_table USING (rowid) WHERE metadata_col = 'X' LIMIT 10`). This is often more practical. The index scan performs an ANN search with a larger, permissive `k'` (e.g., 100). DuckDB's engine then filters this smaller candidate set. This requires the index scan to efficiently support retrieving larger values of `k'`.
 *   **Similarity Threshold:** Filtering based on a distance/similarity score (e.g., `distance(...) < 0.1`) instead of `k`. The index scan needs modification to collect all nodes meeting the threshold during traversal.
@@ -127,7 +127,7 @@ Given the memory issue and the limitations of DuckDB's extension API regarding t
 *   **Custom Caching:** Implement a cache layer to manage loading/unloading external file blocks (nodes) into memory on demand, respecting a configurable memory budget separate from DuckDB's main buffer pool. This is crucial for performance and controlling the extension's RAM footprint.
 *   **Consistency Marker Management:** Carefully manage the consistency marker (e.g., version counter). Increment it in the external file header *only after* a successful `Sync` and `MoveFile`. Ensure `Serialize` writes the *current* marker value that corresponds to the *successfully persisted* external state.
 *   **Persistent RowID Mapping (ART):** Replace the `std::map` with a persistent `duckdb::ART` instance. This ART needs to store `row_t` -> `IndexPointer` (where `IndexPointer` now refers to an offset/identifier within the *external* file/cache system). The ART itself needs persistence, potentially storing its root pointer within the checkpointed metadata or managing its own blocks via the external file system + cache.
-*   **Delete Queue Processing:** Implement `LMDiskannIndex::Vacuum`. This needs to:
+*   **Delete Queue Processing:** Implement `LmDiskannIndex::Vacuum`. This needs to:
     *   Read the delete queue (which also needs persistence, perhaps linked lists within the external file).
     *   For each deleted `row_t`, look up its node location using the persistent ART.
     *   Mark the node as deleted (or remove it).
