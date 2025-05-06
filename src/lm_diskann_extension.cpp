@@ -14,7 +14,7 @@ namespace duckdb {
 
 static void LoadInternal(DatabaseInstance &instance) {
 	// Register the HNSW index module
-	LMDiskannIndex::Register(instance);
+	// LMDiskannIndex::Register(instance);
 }
 
 void LmDiskannExtension::Load(DuckDB &db) {
