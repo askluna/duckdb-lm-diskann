@@ -4,9 +4,9 @@
  */
 #pragma once
 
+#include "LmDiskannScanState.hpp" // For LmDiskannScanState
 #include "config.hpp" // Include for TernaryPlaneBatchView and LmDiskannConfig
 #include "duckdb/common/common.hpp" // For idx_t?
-#include "state.hpp"                // For LmDiskannScanState
 #include <cstdint>                  // For uint64_t
 #include <utility>                  // For std::pair
 #include <vector>                   // For std::vector

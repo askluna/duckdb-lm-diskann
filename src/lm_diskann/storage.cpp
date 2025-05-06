@@ -1,6 +1,6 @@
 
 #include "storage.hpp"
-#include "node.hpp" // For accessors if needed by queue processing
+#include "LmDiskannNodeAccessors.hpp" // For accessors if needed by queue processing
 
 #include "duckdb/common/limits.hpp" // For NumericLimits
 #include "duckdb/common/printer.hpp"

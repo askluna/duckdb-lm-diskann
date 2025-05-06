@@ -1,9 +1,9 @@
 #include "search.hpp"
-#include "LmDiskannIndex.hpp" // Include main index header
+#include "LmDiskannIndex.hpp"         // Include main index header
+#include "LmDiskannNodeAccessors.hpp" // For node accessors
+#include "LmDiskannScanState.hpp"     // For LmDiskannScanState
 #include "config.hpp" // For config structs (needed potentially by index members)
 #include "distance.hpp" // For ComputeExactDistanceFloat, ComputeApproxSimilarityTernary
-#include "node.hpp"  // For node accessors
-#include "state.hpp" // For LmDiskannScanState
 #include "ternary_quantization.hpp" // For EncodeTernary, GetKernel, WordsPerPlane (needed by TopKTernarySearch)
 
 #include "duckdb/common/assert.hpp" // For assert

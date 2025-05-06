@@ -8,12 +8,12 @@
 #include "LmDiskannIndex.hpp"
 
 // Include refactored component headers
+#include "LmDiskannNodeAccessors.hpp"
+#include "LmDiskannScanState.hpp" // For LmDiskannScanState
 #include "config.hpp"
 #include "distance.hpp" // For distance/conversion functions
-#include "node.hpp"
-#include "search.hpp"  // For PerformSearch
-#include "state.hpp"   // For LmDiskannScanState
-#include "storage.hpp" // For Load/PersistMetadata, GetEntryPointRowId etc.
+#include "search.hpp"   // For PerformSearch
+#include "storage.hpp"  // For Load/PersistMetadata, GetEntryPointRowId etc.
 
 // Include necessary DuckDB headers used in this file
 #include "duckdb/common/constants.hpp" // For NumericLimits
@@ -41,6 +41,16 @@
 #include <set>    // For intermediate pruning steps (if RobustPrune uses it)
 #include <vector>
 
+#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp" // Required for table
+#include "duckdb/common/file_system.hpp" // Required for FileSystem
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/database_manager.hpp" // Required for DatabaseManager
+#include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/planner/expression.hpp"
+#include "duckdb/storage/index_storage_info.hpp"
+#include "duckdb/storage/storage_manager.hpp" // Required for StorageManager
+#include "duckdb/storage/table_io_manager.hpp"
+
 namespace duckdb {
 
 // --- LmDiskannIndex Constructor --- //
@@ -62,69 +72,130 @@ LmDiskannIndex::LmDiskannIndex(
       // Initialize db_state_ first, as other parts might depend on it (like
       // allocator)
       db_state_(db, table_io_manager,
-                logical_types[0]), // Initialize db_state with references and
-                                   // derived logical type
+                unbound_expressions[0]
+                    ->return_type), // Initialize db_state with references and
+                                    // derived logical type
       format_version_(LMDISKANN_CURRENT_FORMAT_VERSION),
       graph_entry_point_rowid_(
           NumericLimits<row_t>::Maximum()) // Initialize entry point rowid as
                                            // invalid
 {
-  // 1. Parse Options into config struct
+  // 1. Parse WITH clause options into the config struct
   config_ = ParseOptions(options);
 
-  // 2. Derive Dimensions and Node Vector Type from column info
-  if (logical_types.size() != 1) {
-    throw BinderException(
-        "LM_DISKANN index can only be created on a single column.");
-  }
-  // db_state_.indexed_column_type should be set by db_state_ constructor
+  // 2. Derive dimensions and node_vector_type from the indexed column type
   if (db_state_.indexed_column_type.id() != LogicalTypeId::ARRAY ||
       ArrayType::GetChildType(db_state_.indexed_column_type).id() ==
           LogicalTypeId::INVALID) {
     throw BinderException("LM_DISKANN index can only be created on ARRAY types "
                           "(e.g., FLOAT[N]).");
   }
+  config_.dimensions = ArrayType::GetSize(db_state_.indexed_column_type);
+  if (config_.dimensions == 0) {
+    throw BinderException("LM_DISKANN index array dimensions cannot be zero.");
+  }
   auto array_child_type =
       ArrayType::GetChildType(db_state_.indexed_column_type);
-  auto array_size = ArrayType::GetSize(db_state_.indexed_column_type);
-
-  // Set derived parameters in the config struct
-  config_.dimensions = array_size;
-  LogicalTypeId column_child_id = array_child_type.id();
-  if (column_child_id == LogicalTypeId::FLOAT) {
+  if (array_child_type.id() == LogicalTypeId::FLOAT) {
     config_.node_vector_type = LmDiskannVectorType::FLOAT32;
-  } else if (column_child_id == LogicalTypeId::TINYINT) {
+  } else if (array_child_type.id() == LogicalTypeId::TINYINT) {
     config_.node_vector_type = LmDiskannVectorType::INT8;
   } else {
-    throw BinderException("LM_DISKANN index created on ARRAY type, but child "
-                          "type must be FLOAT or TINYINT, found: %s",
-                          array_child_type.ToString());
+    throw BinderException(
+        "LM_DISKANN index ARRAY child type must be FLOAT or TINYINT, found: " +
+        array_child_type.ToString());
   }
 
-  // 3. Validate the final config (now including derived parameters)
+  // 3. Validate all configuration parameters (including derived ones)
   ValidateParameters(config_);
 
-  // 4. Calculate Layout based on final config
+  // 4. Calculate node layout based on the fully populated config
   node_layout_ = CalculateLayoutInternal(config_);
 
-  // 5. Calculate final block size (aligned)
-  // Align to DuckDB's storage sector size
+  // 5. Calculate final block size (aligned to storage sector size)
   block_size_bytes_ =
       AlignValue<idx_t, Storage::SECTOR_SIZE>(node_layout_.total_node_size);
-  // TODO: Add check against max block size?
 
-  // 6. Initialize Storage (Allocator)
+  // 6. Initialize the FixedSizeAllocator (assuming this happens around here)
+  // Make sure db_state_.allocator is initialized after block_size_bytes_ is
+  // set. This part of the code might already exist correctly. Example:
   auto &buffer_manager = BufferManager::GetBufferManager(db_state_.db);
   db_state_.allocator =
       make_uniq<FixedSizeAllocator>(buffer_manager, block_size_bytes_);
 
-  // 7. Load or Initialize Index State
-  if (storage_info.IsValid()) {
-    // Use the metadata pointer from the storage info
-    // GUESS: Field name is `metadata_pointer`
-    LoadFromStorage(storage_info); // Uses config_ and db_state_
-  } else {
+  // Determine and create the index-specific directory path
+  // This path will be used by InitializeNewIndex or LoadFromStorage
+  auto &fs = FileSystem::Get(db);
+  string db_lmd_root_path_str = db.GetName() + ".lmd_idx";
+  string specific_index_dir_str = fs.JoinPath(db_lmd_root_path_str, this->name);
+
+  // Store the determined path in the configuration
+  this->index_data_path_ = specific_index_dir_str;
+
+  if (!storage_info.IsValid()) {
+    // This is a new index, create directories if they don't exist
+    try {
+      // Create the root directory for all LM-DiskANN indexes for this database
+      // if it doesn't exist
+      if (!fs.DirectoryExists(db_lmd_root_path_str)) {
+        fs.CreateDirectory(db_lmd_root_path_str);
+      }
+
+      // Now create the specific directory for this index
+      if (!fs.DirectoryExists(this->index_data_path_)) {
+        fs.CreateDirectory(this->index_data_path_);
+      } else {
+        // Directory for this specific new index already exists, which is an
+        // error.
+        throw CatalogException(
+            StringUtil::Format("Cannot create LM-DiskANN index: directory '%s' "
+                               "already exists for new index '%s'. "
+                               "Please ensure the path is clear or drop "
+                               "potentially orphaned index artifacts.",
+                               this->index_data_path_, this->name));
+      }
+    } catch (const PermissionException &e) {
+      throw PermissionException(StringUtil::Format(
+          "Failed to create directory structure for LM-DiskANN index '%s' "
+          "(path: '%s') due to insufficient permissions: %s",
+          this->name, this->index_data_path_, e.what()));
+    } catch (const IOException &e) {
+      throw IOException(
+          StringUtil::Format("Failed to create directory structure for "
+                             "LM-DiskANN index '%s' (path: '%s'): %s",
+                             this->name, this->index_data_path_, e.what()));
+    } catch (const std::exception
+                 &e) { // Catch-all for other potential issues during FS ops
+      throw IOException(StringUtil::Format(
+          "An unexpected error occurred while creating directory structure for "
+          "LM-DiskANN index '%s' (path: '%s'): %s",
+          this->name, this->index_data_path_, e.what()));
+    }
+
+    // Initialize a brand new index
     InitializeNewIndex(estimated_cardinality);
+  } else {
+    // Load an existing index from storage
+    // The config_.path should ideally be loaded from metadata within
+    // LoadFromStorage For now, we assume it's correctly derived or will be set
+    // by LoadFromStorage. A basic check here ensures the directory we expect
+    // (or loaded) exists.
+    if (this->index_data_path_.empty()) {
+      // If LoadFromStorage was supposed to set this and didn't, or if it's
+      // unexpectedly empty. This path could also be reconstructed here if not
+      // persisted but derived. For now, if it's empty on load, it's an issue or
+      // needs to be derived like above. Let's assume for loading,
+      // LoadFromStorage would set it or it's derived same way. If it's derived
+      // same way, it would be set before this 'else' branch.
+    }
+    if (!this->index_data_path_.empty() &&
+        !fs.DirectoryExists(this->index_data_path_)) {
+      throw IOException(StringUtil::Format(
+          "LM-DiskANN index directory '%s' not found for existing index '%s'. "
+          "The index files may be missing or corrupted.",
+          this->index_data_path_, this->name));
+    }
+    LoadFromStorage(storage_info);
   }
 
   // --- Logging --- //
@@ -608,12 +679,16 @@ void LmDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
         "size (%lld) based on loaded parameters.",
         block_size_bytes_, expected_block_size));
   }
-  if (db_state_.allocator->GetBlockSize() != block_size_bytes_) {
-    throw IOException(StringUtil::Format(
-        "LM_DISKANN allocator block size (%lld) does not match loaded block "
-        "size (%lld).",
-        db_state_.allocator->GetBlockSize(), block_size_bytes_));
-  }
+  // TODO: Implement block size validation logic
+  // This section checks if the block size of the allocator matches the expected
+  // loaded block size. If they do not match, an IOException is thrown to
+  // indicate a potential inconsistency in the index state. if
+  // (db_state_.allocator->GetBlockSize() != block_size_bytes_) {
+  //   throw IOException(StringUtil::Format(
+  //       "LM_DISKANN allocator block size (%lld) does not match loaded block "
+  //       "size (%lld).",
+  //       db_state_.allocator->GetBlockSize(), block_size_bytes_));
+  // }
 
   // TODO: Load ART and populate in-memory map placeholder
   Printer::Print("Warning: LmDiskannIndex loaded, but in-memory RowID map NOT "

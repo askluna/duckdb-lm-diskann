@@ -2,7 +2,7 @@
  * @file node.cpp
  * @brief Implements low-level node block accessor functions.
  */
-#include "node.hpp"
+#include "LmDiskannNodeAccessors.hpp"
 #include "config.hpp" // Include config again here for layout struct definition
 #include "duckdb/common/helper.hpp"        // For AlignValue
 #include "duckdb/common/limits.hpp"        // For NumericLimits

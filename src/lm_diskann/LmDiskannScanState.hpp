@@ -1,5 +1,5 @@
 /**
- * @file state.hpp
+ * @file LmDiskannScanState.hpp
  * @brief Defines the scan state structure used during LM-DiskANN index
  * searches.
  */

@@ -17,8 +17,8 @@
 #include "duckdb/storage/table_io_manager.hpp"
 
 // Include headers for the refactored components
-#include "config.hpp" // Include the new config header
-#include "state.hpp"  // For scan state definition
+#include "LmDiskannScanState.hpp" // For scan state definition
+#include "config.hpp"             // Include the new config header
 
 #include <map>    // Using std::map for in-memory RowID mapping for now
 #include <memory> // For unique_ptr
@@ -205,6 +205,10 @@ private:
   // --- DuckDB Integration State --- //
   //! @brief Holds DuckDB-related references and state.
   LmDiskannDBState db_state_;
+
+  //! @brief Path to the index-specific data directory (e.g.,
+  //! [db_name].lmd_idx/[index_name]/)
+  string index_data_path_;
 
   //! @brief Internal format version (for metadata check).
   uint8_t format_version_;

@@ -20,7 +20,7 @@
     -   `src/lm_diskann/storage.cpp/hpp`: Implements `LoadFromStorage`, `PersistMetadata`. Currently uses `FixedSizeAllocator`. Key area for change if moving to external storage.
     -   `src/lm_diskann/config.cpp/hpp`: Handles `CREATE INDEX ... WITH` options, layout calculations. Defines index parameters.
     -   `src/lm_diskann/search.cpp/hpp`: Implements the ANN search logic (beam search). Needs to interact with potential caching layers and handle filtering parameters (`k`, threshold).
-    -   `src/lm_diskann/node.cpp/hpp`: Low-level node block accessors. Defines the on-disk/in-memory structure of a node.
+    -   `src/lm_diskann/LmDiskannNodeAccessors.cpp/hpp`: Low-level node block accessors. Defines the on-disk/in-memory structure of a node.
     -   `src/lm_diskann/distance.cpp/hpp`: Distance calculations, vector compression (Ternary assumption noted).
     -   `docs/2025-05-05.Issues with duckdb index memory handling.md`: **Central document**. Explains the non-evictable memory problem, analyzes options (DuckDB primitives, manual Pin/Unpin, BLOBs, external files), details consistency challenges, and proposes Strategies A, B, C. Recommends Strategy A. Outlines atomic write protocol and validation logic.
     -   `docs/2025-05-05 Diskann progress.md`: Provides a snapshot of completed work (refactoring, basic algorithms) and immediate todos (ART, delete queue). Highlights limitations (in-memory maps, Ternary assumption).

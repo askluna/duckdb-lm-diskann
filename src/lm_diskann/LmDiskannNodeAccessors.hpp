@@ -1,5 +1,5 @@
 /**
- * @file node.hpp
+ * @file LmDiskannNodeAccessors.hpp
  * @brief Provides low-level accessors for reading and writing data within a
  * node's disk block.
  */
