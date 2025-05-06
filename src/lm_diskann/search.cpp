@@ -1,7 +1,7 @@
 #include "search.hpp"
-#include "LmDiskannIndex.hpp"         // Include main index header
-#include "LmDiskannNodeAccessors.hpp" // For node accessors
-#include "LmDiskannScanState.hpp"     // For LmDiskannScanState
+#include "LmDiskannIndex.hpp"     // Include main index header
+#include "LmDiskannScanState.hpp" // For LmDiskannScanState
+#include "NodeAccessors.hpp"      // For node accessors
 #include "config.hpp" // For config structs (needed potentially by index members)
 #include "distance.hpp" // For ComputeExactDistanceFloat, ComputeApproxSimilarityTernary
 #include "ternary_quantization.hpp" // For EncodeTernary, GetKernel, WordsPerPlane (needed by TopKTernarySearch)
@@ -79,8 +79,8 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
   try {
     auto entry_node_handle = index.GetNodeBuffer(entry_point_ptr);
     auto entry_node_block = entry_node_handle.Ptr();
-    const_data_ptr_t entry_node_raw_vec = LmDiskannNodeAccessors::GetNodeVector(
-        entry_node_block, index.GetNodeLayout());
+    const_data_ptr_t entry_node_raw_vec =
+        NodeAccessors::GetNodeVector(entry_node_block, index.GetNodeLayout());
 
     // Assuming query_vector_ptr points to float data
     memcpy(query_float_vec.data(), scan_state.query_vector_ptr,
@@ -148,9 +148,9 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
       const NodeLayoutOffsets &layout = index.GetNodeLayout();
 
       uint16_t neighbor_count =
-          LmDiskannNodeAccessors::GetNeighborCount(current_node_block);
+          NodeAccessors::GetNeighborCount(current_node_block);
       const row_t *neighbor_ids_ptr =
-          LmDiskannNodeAccessors::GetNeighborIDsPtr(current_node_block, layout);
+          NodeAccessors::GetNeighborIDsPtr(current_node_block, layout);
       if (!neighbor_ids_ptr)
         continue;
 
@@ -163,8 +163,8 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
         scan_state.visited.insert(neighbor_rowid);
 
         TernaryPlanesView neighbor_planes =
-            LmDiskannNodeAccessors::GetNeighborTernaryPlanes(
-                current_node_block, layout, i, config.dimensions);
+            NodeAccessors::GetNeighborTernaryPlanes(current_node_block, layout,
+                                                    i, config.dimensions);
 
         if (!neighbor_planes.IsValid()) {
           Printer::Print(StringUtil::Format(
@@ -218,8 +218,8 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
           continue;
         auto cand_handle = index.GetNodeBuffer(cand_ptr);
         auto cand_block = cand_handle.Ptr();
-        const_data_ptr_t cand_raw_vec = LmDiskannNodeAccessors::GetNodeVector(
-            cand_block, index.GetNodeLayout());
+        const_data_ptr_t cand_raw_vec =
+            NodeAccessors::GetNodeVector(cand_block, index.GetNodeLayout());
 
         index.ConvertNodeVectorToFloat(cand_raw_vec, node_float_vec.data());
 

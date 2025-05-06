@@ -97,7 +97,7 @@ Here's a breakdown of the development status for the LM-DiskANN DuckDB extension
   1. **Add Enum Value:** Add `TERNARY` to `LmDiskannEdgeType` enum in `lm_diskann_config.hpp`.
   2. **Update Parsing:** Modify `ParseOptions` in `lm_diskann_config.cpp` to recognize `EDGE_TYPE = 'TERNARY'`.
   3. **Update Size Calculation:** Modify `GetEdgeVectorTypeSizeBytes` in `lm_diskann_config.cpp` to return `(dimensions + 3) / 4` (or `(2 * dimensions + 7) / 8`) bytes for the TERNARY type. Recalculate `block_size_bytes_` accordingly.
-  4. **Integrate Encoding:** In `LmDiskannIndex.cpp::RobustPrune` (when writing final neighbors) and potentially `FindAndConnectNeighbors`, if `resolved_edge_vector_type_ == TERNARY`, call `EncodeTernary` from the header to compress neighbor vectors before writing them to the block using `LmDiskannNodeAccessors::GetCompressedNeighborPtrMutable`.
+  4. **Integrate Encoding:** In `LmDiskannIndex.cpp::RobustPrune` (when writing final neighbors) and potentially `FindAndConnectNeighbors`, if `resolved_edge_vector_type_ == TERNARY`, call `EncodeTernary` from the header to compress neighbor vectors before writing them to the block using `NodeAccessors::GetCompressedNeighborPtrMutable`.
   5. **Integrate Distance:** In `lm_diskann_distance.cpp::ComputeApproxDistance`, if `resolved_edge_vector_type_ == TERNARY`:
      - Encode the `query_ptr` (float) into temporary ternary planes using `EncodeTernary`.
      - Get the appropriate kernel using `GetKernel()`.

@@ -364,11 +364,9 @@ ErrorData LmDiskannIndex::Insert(IndexLock &lock, DataChunk &data,
   try {
     new_node_data = GetNodeDataMutable(new_node_ptr);
 
-    LmDiskannNodeAccessors::InitializeNodeBlock(new_node_data,
-                                                block_size_bytes_);
+    NodeAccessors::InitializeNodeBlock(new_node_data, block_size_bytes_);
 
-    memcpy(LmDiskannNodeAccessors::GetNodeVectorMutable(new_node_data,
-                                                        node_layout_),
+    memcpy(NodeAccessors::GetNodeVectorMutable(new_node_data, node_layout_),
            input_vector_raw_ptr,
            GetVectorTypeSizeBytes(config_.node_vector_type) *
                config_.dimensions);
@@ -376,7 +374,7 @@ ErrorData LmDiskannIndex::Insert(IndexLock &lock, DataChunk &data,
     row_t entry_point_row_id = GetEntryPoint();
 
     if (entry_point_row_id == NumericLimits<row_t>::Maximum()) {
-      LmDiskannNodeAccessors::SetNeighborCount(new_node_data, 0);
+      NodeAccessors::SetNeighborCount(new_node_data, 0);
       SetEntryPoint(row_id, new_node_ptr);
     } else {
       FindAndConnectNeighbors(row_id, new_node_ptr, input_vector_float_ptr);
@@ -802,14 +800,13 @@ void LmDiskannIndex::RobustPrune(
     node_data = GetNodeDataMutable(node_ptr);
 
     uint16_t current_neighbor_count =
-        LmDiskannNodeAccessors::GetNeighborCount(node_data);
+        NodeAccessors::GetNeighborCount(node_data);
     row_t *current_neighbor_ids =
-        LmDiskannNodeAccessors::GetNeighborIDsPtrMutable(node_data,
-                                                         node_layout_);
+        NodeAccessors::GetNeighborIDsPtrMutable(node_data, node_layout_);
 
     vector<float> node_vector_float(config_.dimensions);
     const_data_ptr_t node_vector_raw_ptr =
-        LmDiskannNodeAccessors::GetNodeVector(node_data, node_layout_);
+        NodeAccessors::GetNodeVector(node_data, node_layout_);
     ConvertNodeVectorToFloat(node_vector_raw_ptr, node_vector_float.data());
 
     for (uint16_t i = 0; i < current_neighbor_count; ++i) {
@@ -828,8 +825,8 @@ void LmDiskannIndex::RobustPrune(
         continue;
 
       TernaryPlanesView existing_neighbor_planes =
-          LmDiskannNodeAccessors::GetNeighborTernaryPlanes(
-              node_data, node_layout_, i, config_.dimensions);
+          NodeAccessors::GetNeighborTernaryPlanes(node_data, node_layout_, i,
+                                                  config_.dimensions);
       if (existing_neighbor_planes.IsValid()) {
         float dist = CalculateApproxDistance(
             node_vector_float.data(), existing_neighbor_planes.positive_plane);
@@ -876,7 +873,7 @@ void LmDiskannIndex::RobustPrune(
       try {
         cand_data_ptr = GetNodeData(candidate_ptr); // Read-only access
         cand_vec_ptr_raw =
-            LmDiskannNodeAccessors::GetNodeVector(cand_data_ptr, node_layout_);
+            NodeAccessors::GetNodeVector(cand_data_ptr, node_layout_);
         ConvertNodeVectorToFloat(cand_vec_ptr_raw,
                                  candidate_vector_float.data());
       } catch (...) {
@@ -898,9 +895,8 @@ void LmDiskannIndex::RobustPrune(
         try {
           auto existing_final_data_ptr =
               GetNodeData(existing_final_ptr); // Read-only access
-          auto existing_final_vec_ptr_raw =
-              LmDiskannNodeAccessors::GetNodeVector(existing_final_data_ptr,
-                                                    node_layout_);
+          auto existing_final_vec_ptr_raw = NodeAccessors::GetNodeVector(
+              existing_final_data_ptr, node_layout_);
           ConvertNodeVectorToFloat(existing_final_vec_ptr_raw,
                                    existing_final_vector_float.data());
         } catch (...) {
@@ -930,9 +926,9 @@ void LmDiskannIndex::RobustPrune(
     uint16_t final_count = static_cast<uint16_t>(final_neighbor_ids.size());
     D_ASSERT(final_count <= max_neighbors);
 
-    LmDiskannNodeAccessors::SetNeighborCount(node_data, final_count);
-    row_t *dest_ids = LmDiskannNodeAccessors::GetNeighborIDsPtrMutable(
-        node_data, node_layout_);
+    NodeAccessors::SetNeighborCount(node_data, final_count);
+    row_t *dest_ids =
+        NodeAccessors::GetNeighborIDsPtrMutable(node_data, node_layout_);
 
     idx_t plane_size_bytes = GetTernaryPlaneSizeBytes(config_.dimensions);
     data_ptr_t dest_pos_planes_base =
@@ -1016,9 +1012,9 @@ void LmDiskannIndex::FindAndConnectNeighbors(
   // --- Update Neighbors (Reciprocal Edges) --- //
   auto new_node_data_ro = GetNodeData(new_node_ptr);
   uint16_t final_new_neighbor_count =
-      LmDiskannNodeAccessors::GetNeighborCount(new_node_data_ro);
+      NodeAccessors::GetNeighborCount(new_node_data_ro);
   const row_t *final_new_neighbor_ids =
-      LmDiskannNodeAccessors::GetNeighborIDsPtr(new_node_data_ro, node_layout_);
+      NodeAccessors::GetNeighborIDsPtr(new_node_data_ro, node_layout_);
 
   vector<uint8_t> new_node_compressed_storage(
       node_layout_.ternary_edge_size_bytes);
@@ -1042,7 +1038,7 @@ void LmDiskannIndex::FindAndConnectNeighbors(
 
       neighbor_data_ro = GetNodeData(neighbor_ptr);
       neighbor_vec_ptr_raw =
-          LmDiskannNodeAccessors::GetNodeVector(neighbor_data_ro, node_layout_);
+          NodeAccessors::GetNodeVector(neighbor_data_ro, node_layout_);
       ConvertNodeVectorToFloat(neighbor_vec_ptr_raw, neighbor_float_vec.data());
 
       float dist_neighbor_to_new = ComputeExactDistanceFloat(
