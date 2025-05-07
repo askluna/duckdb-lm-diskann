@@ -13,8 +13,8 @@
 #include "LmDiskannScanState.hpp"
 #include "distance.hpp" // For distance/conversion functions
 #include "index_config.hpp"
-#include "search.hpp"  // For PerformSearch
-#include "storage.hpp" // For Load/PersistMetadata, GetEntryPointRowId etc.
+#include "search.hpp"          // For PerformSearch
+#include "storage_manager.hpp" // For Load/PersistMetadata, GetEntryPointRowId etc.
 
 // Include necessary DuckDB headers used in this file
 #include "duckdb/common/constants.hpp" // For NumericLimits
@@ -489,8 +489,8 @@ bool LmDiskannIndex::MergeIndexes(::duckdb::IndexLock &state,
  */
 void LmDiskannIndex::Vacuum(::duckdb::IndexLock &state) {
   // FIXME: ProcessDeletionQueue needs implementation (currently placeholder in
-  // storage.hpp) ProcessDeletionQueue(delete_queue_head_ptr_, db_state_.db,
-  // *db_state_.allocator, *this);
+  // storage_manager.hpp) ProcessDeletionQueue(delete_queue_head_ptr_,
+  // db_state_.db, *db_state_.allocator, *this);
   ::duckdb::Printer::Print(
       "LmDiskannIndex::Vacuum called, ProcessDeletionQueue not implemented.");
 

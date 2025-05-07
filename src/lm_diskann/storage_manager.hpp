@@ -1,5 +1,5 @@
 /**
- * @file storage.hpp
+ * @file storage_manager.hpp
  * @brief Declares functions related to LM-DiskANN index persistence and storage
  * management.
  */

@@ -1,5 +1,5 @@
 
-#include "storage.hpp"
+#include "storage_manager.hpp"
 
 #include "duckdb/common/limits.hpp" // For NumericLimits
 #include "duckdb/common/printer.hpp"
@@ -124,29 +124,30 @@ void LoadMetadata(
     ::duckdb::IndexPointer
         &delete_queue_head_ptr /*, IndexPointer &rowid_map_root_ptr */) {
 
-  if (!metadata_ptr.IsValid()) {
-    throw ::duckdb::IOException(
-        "Cannot load LM_DISKANN index: metadata pointer is invalid.");
-  }
-  auto &buffer_manager = ::duckdb::BufferManager::GetBufferManager(db);
-  auto handle =
-      buffer_manager.Pin(allocator.GetMetaBlock(metadata_ptr.GetBlockId()));
-  ::duckdb::MetadataReader reader(handle.GetFileBuffer(),
-                                  metadata_ptr.GetOffset());
+  // TODO: Implement this
+  // if (!metadata_ptr.IsValid()) {
+  //   throw ::duckdb::IOException(
+  //       "Cannot load LM_DISKANN index: metadata pointer is invalid.");
+  // }
+  // auto &buffer_manager = ::duckdb::BufferManager::GetBufferManager(db);
+  // auto handle =
+  //     buffer_manager.Pin(allocator.GetMetaBlock(metadata_ptr.GetBlockId()));
+  // ::duckdb::MetadataReader reader(handle.GetFileBuffer(),
+  //                                 metadata_ptr.GetOffset());
 
-  // --- Deserialize Parameters ---
-  reader.Read<uint8_t>(format_version);
-  // Version check should happen in the caller (LmDiskannIndex constructor)
-  reader.Read<LmDiskannMetricType>(metric_type);
-  reader.Read<LmDiskannVectorType>(node_vector_type);
-  reader.Read<idx_t>(dimensions);
-  reader.Read<uint32_t>(r);
-  reader.Read<uint32_t>(l_insert);
-  reader.Read<float>(alpha);
-  reader.Read<::uint32_t>(l_search);
-  reader.Read<idx_t>(block_size_bytes);
-  reader.Read<::duckdb::IndexPointer>(graph_entry_point_ptr);
-  reader.Read<::duckdb::IndexPointer>(delete_queue_head_ptr);
+  // // --- Deserialize Parameters ---
+  // reader.Read<uint8_t>(format_version);
+  // // Version check should happen in the caller (LmDiskannIndex constructor)
+  // reader.Read<LmDiskannMetricType>(metric_type);
+  // reader.Read<LmDiskannVectorType>(node_vector_type);
+  // reader.Read<idx_t>(dimensions);
+  // reader.Read<uint32_t>(r);
+  // reader.Read<uint32_t>(l_insert);
+  // reader.Read<float>(alpha);
+  // reader.Read<::uint32_t>(l_search);
+  // reader.Read<idx_t>(block_size_bytes);
+  // reader.Read<::duckdb::IndexPointer>(graph_entry_point_ptr);
+  // reader.Read<::duckdb::IndexPointer>(delete_queue_head_ptr);
   // reader.Read<IndexPointer>(rowid_map_root_ptr);
 }
 
