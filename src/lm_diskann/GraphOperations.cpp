@@ -354,4 +354,11 @@ row_t GraphOperations::GetGraphEntryPointRowId() const {
   return graph_entry_point_rowid_;
 }
 
+void GraphOperations::SetLoadedEntryPoint(IndexPointer ptr, row_t row_id) {
+  graph_entry_point_ptr_ = ptr;
+  graph_entry_point_rowid_ = row_id;
+  // This is setting state from a persisted file, so the index is not 'dirty'
+  // from this operation.
+}
+
 } // namespace duckdb

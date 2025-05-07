@@ -76,6 +76,13 @@ public:
    */
   row_t GetGraphEntryPointRowId() const;
 
+  /**
+   * @brief Sets the entry point state loaded from persisted metadata.
+   * @param ptr The IndexPointer to the entry point node.
+   * @param row_id The row_t of the entry point node.
+   */
+  void SetLoadedEntryPoint(IndexPointer ptr, row_t row_id);
+
 private:
   /**
    * @brief Applies the Robust Prune algorithm to select neighbors for a node.

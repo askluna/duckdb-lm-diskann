@@ -71,18 +71,8 @@ LmDiskannIndex::LmDiskannIndex(
     const IndexStorageInfo &storage_info, idx_t estimated_cardinality)
     : BoundIndex(name, LmDiskannIndex::TYPE_NAME, index_constraint_type,
                  column_ids, table_io_manager, unbound_expressions, db),
-      // Initialize db_state_ first, as other parts might depend on it (like
-      // allocator)
-      db_state_(db, table_io_manager,
-                unbound_expressions[0]
-                    ->return_type), // Initialize db_state with references and
-                                    // derived logical type
-      format_version_(LMDISKANN_CURRENT_FORMAT_VERSION),
-      graph_entry_point_rowid_(
-          NumericLimits<row_t>::Maximum()), // Initialize entry point rowid as
-                                            // invalid
-      is_dirty_(false)                      // Initialize is_dirty_
-{
+      db_state_(db, table_io_manager, unbound_expressions[0]->return_type),
+      format_version_(LMDISKANN_CURRENT_FORMAT_VERSION), is_dirty_(false) {
   // 1. Parse WITH clause options into the config struct
   config_ = ParseOptions(options);
 
@@ -119,23 +109,14 @@ LmDiskannIndex::LmDiskannIndex(
   block_size_bytes_ =
       AlignValue<idx_t, Storage::SECTOR_SIZE>(node_layout_.total_node_size);
 
-  // 6. Initialize the FixedSizeAllocator (assuming this happens around here)
-  // Make sure db_state_.allocator is initialized after block_size_bytes_ is
-  // set. This part of the code might already exist correctly. Example:
-  auto &buffer_manager = BufferManager::GetBufferManager(db_state_.db);
-  db_state_.allocator =
-      make_uniq<FixedSizeAllocator>(buffer_manager, block_size_bytes_);
-
-  // Instantiate NodeManager (manages allocator and rowid_map)
-  // The original db_state_.allocator is now owned by node_manager_
+  // 6. Initialize NodeManager which creates its own FixedSizeAllocator
   auto &buffer_manager = BufferManager::GetBufferManager(db_state_.db);
   node_manager_ = make_uniq<NodeManager>(buffer_manager, block_size_bytes_);
 
   // Instantiate GraphOperations (needs config, layout, node_manager, and this
   // index context)
-  graph_operations_ = make_uniq<GraphOperations>(
-      config_, node_layout_, *node_manager_, *this, graph_entry_point_rowid_,
-      graph_entry_point_ptr_);
+  graph_operations_ =
+      make_uniq<GraphOperations>(config_, node_layout_, *node_manager_, *this);
 
   // Determine and create the index-specific directory path
   // This path will be used by InitializeNewIndex or LoadFromStorage
@@ -290,12 +271,11 @@ ErrorData LmDiskannIndex::Append(IndexLock &lock, DataChunk &input,
  * @param index_lock Lock protecting the index state.
  */
 void LmDiskannIndex::CommitDrop(IndexLock &index_lock) {
-  if (db_state_.allocator) {
-    db_state_.allocator->Reset();
+  if (node_manager_) {
+    node_manager_->Reset();
   }
   db_state_.metadata_ptr.Clear();
-  in_memory_rowid_map_.clear();
-  // TODO: Drop ART resources when implemented
+  // in_memory_rowid_map_ is managed by NodeManager and cleared in its Reset()
   delete_queue_head_ptr_.Clear();
 }
 
@@ -317,12 +297,16 @@ void LmDiskannIndex::Delete(IndexLock &lock, DataChunk &entries,
   for (idx_t i = 0; i < entries.size(); ++i) {
     row_t row_id = row_ids_data[i];
     try {
-      DeleteNodeFromMapAndFreeBlock(row_id);
-      EnqueueDeletion(row_id);
+      if (node_manager_) {
+        node_manager_->FreeNode(row_id);
+      }
+      if (node_manager_) { // Need allocator for the global EnqueueDeletion
+        duckdb::EnqueueDeletion(row_id, delete_queue_head_ptr_, db_state_.db,
+                                node_manager_->GetAllocator());
+      }
 
-      if (row_id == graph_entry_point_rowid_) {
-        graph_entry_point_ptr_.Clear();
-        graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum();
+      if (graph_operations_) {
+        graph_operations_->HandleNodeDeletion(row_id);
       }
       changes_made = true;
 
@@ -389,14 +373,21 @@ ErrorData LmDiskannIndex::Insert(IndexLock &lock, DataChunk &data,
 
   IndexPointer new_node_ptr;
   try {
-    new_node_ptr = AllocateNode(row_id);
+    if (!node_manager_) {
+      return ErrorData("NodeManager not initialized during Insert.");
+    }
+    new_node_ptr = node_manager_->AllocateNode(row_id);
   } catch (const std::exception &e) {
     return ErrorData(StringUtil::Format("Error allocating node: %s", e.what()));
   }
 
   data_ptr_t new_node_data = nullptr;
   try {
-    new_node_data = GetNodeDataMutable(new_node_ptr);
+    if (!node_manager_) {
+      return ErrorData(
+          "NodeManager not initialized before GetNodeDataMutable.");
+    }
+    new_node_data = node_manager_->GetNodeDataMutable(new_node_ptr);
 
     NodeAccessors::InitializeNodeBlock(new_node_data, block_size_bytes_);
 
@@ -405,21 +396,19 @@ ErrorData LmDiskannIndex::Insert(IndexLock &lock, DataChunk &data,
            GetVectorTypeSizeBytes(config_.node_vector_type) *
                config_.dimensions);
 
-    row_t entry_point_row_id = GetEntryPoint();
-
-    if (entry_point_row_id == NumericLimits<row_t>::Maximum()) {
-      NodeAccessors::SetNeighborCount(new_node_data, 0);
-      SetEntryPoint(row_id, new_node_ptr);
-    } else {
-      FindAndConnectNeighbors(row_id, new_node_ptr, input_vector_float_ptr);
+    if (!graph_operations_) {
+      return ErrorData("GraphOperations not initialized during Insert.");
     }
+    graph_operations_->InsertNode(row_id, new_node_ptr, input_vector_float_ptr);
 
     is_dirty_ = true;
     return ErrorData();
 
   } catch (const std::exception &e) {
     try {
-      DeleteNodeFromMapAndFreeBlock(row_id);
+      if (node_manager_) {
+        node_manager_->FreeNode(row_id);
+      }
     } catch (...) {
     } // Best effort cleanup
     return ErrorData(StringUtil::Format(
@@ -439,13 +428,8 @@ ErrorData LmDiskannIndex::Insert(IndexLock &lock, DataChunk &data,
 IndexStorageInfo LmDiskannIndex::GetStorageInfo(bool get_buffers) {
   IndexStorageInfo info;
   info.name = name;
-  // REMOVED: IndexStorageInfo has no metadata_pointer field.
-  // This needs to be stored/retrieved via the allocator/metadata block.
-  if (db_state_.allocator) {
-    // GUESS: Allocator info might be retrieved this way
-    info.allocator_infos.push_back(db_state_.allocator->GetInfo());
-    // TODO: Verify correct field names and methods in IndexStorageInfo and
-    // FixedSizeAllocator
+  if (node_manager_) {
+    info.allocator_infos.push_back(node_manager_->GetAllocator().GetInfo());
   }
   return info;
 }
@@ -456,13 +440,11 @@ IndexStorageInfo LmDiskannIndex::GetStorageInfo(bool get_buffers) {
  */
 idx_t LmDiskannIndex::GetInMemorySize() {
   idx_t base_size = 0;
-  if (db_state_.allocator) {
-    base_size += db_state_.allocator->GetInMemorySize();
+  if (node_manager_) {
+    base_size +=
+        node_manager_->GetInMemorySize(); // NodeManager's size includes its
+                                          // allocator and map
   }
-  base_size +=
-      in_memory_rowid_map_.size() *
-      (sizeof(row_t) + sizeof(IndexPointer) + 16); // Estimate map overhead
-  // TODO: Add ART in-memory size when implemented
   return base_size;
 }
 
@@ -504,7 +486,6 @@ void LmDiskannIndex::Vacuum(IndexLock &state) {
  */
 string LmDiskannIndex::VerifyAndToString(IndexLock &state,
                                          const bool only_verify) {
-  // TODO: Implement actual verification logic
   string result = "LmDiskannIndex [Not Verified]";
   result += StringUtil::Format(
       "\n - Config: Metric=%s, Type=%s, Dim=%lld, R=%d, L_insert=%d, "
@@ -514,14 +495,15 @@ string LmDiskannIndex::VerifyAndToString(IndexLock &state,
       config_.r, config_.l_insert, config_.alpha, config_.l_search);
   result += StringUtil::Format(
       "\n - Allocator Blocks Used: %lld",
-      db_state_.allocator ? db_state_.allocator->GetSegmentCount() : 0);
-  result += StringUtil::Format("\n - In-Memory Map Size: %lld",
-                               in_memory_rowid_map_.size());
+      node_manager_ ? node_manager_->GetAllocator().GetSegmentCount() : 0);
+  result +=
+      StringUtil::Format("\n - Node Count (from NodeManager): %lld",
+                         node_manager_ ? node_manager_->GetNodeCount() : 0);
   result += StringUtil::Format(
-      "\n - Entry Point RowID: %lld",
-      static_cast<long long>(
-          graph_entry_point_rowid_)); // Use static_cast for clarity
-  // Replace ToString() with manual formatting
+      "\n - Entry Point RowID (from GraphOperations): %lld",
+      static_cast<long long>(graph_operations_
+                                 ? graph_operations_->GetGraphEntryPointRowId()
+                                 : NumericLimits<row_t>::Maximum()));
   result += StringUtil::Format(
       "\n - Metadata Ptr: [BufferID=%lld, Offset=%lld, Meta=%d]",
       db_state_.metadata_ptr.GetBufferId(), db_state_.metadata_ptr.GetOffset(),
@@ -639,15 +621,14 @@ idx_t LmDiskannIndex::Scan(IndexScanState &state, Vector &result) {
  * @param estimated_cardinality Estimated number of rows (unused currently).
  */
 void LmDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
-  if (!db_state_.allocator) {
-    throw InternalException("Allocator not initialized in InitializeNewIndex");
+  if (!node_manager_) {
+    throw InternalException(
+        "NodeManager not initialized in InitializeNewIndex");
   }
-  db_state_.metadata_ptr = db_state_.allocator->New();
+  db_state_.metadata_ptr = node_manager_->GetAllocator().New();
   delete_queue_head_ptr_.Clear();
-  graph_entry_point_ptr_.Clear();
-  graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum();
-  // TODO: Initialize ART root pointer when implemented:
-  // rowid_map_root_ptr_.Clear();
+  // GraphOperations state is managed internally. Entry point is initially
+  // invalid.
 
   LmDiskannMetadata initial_metadata;
   initial_metadata.format_version = format_version_;
@@ -659,12 +640,18 @@ void LmDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
   initial_metadata.alpha = config_.alpha;
   initial_metadata.l_search = config_.l_search;
   initial_metadata.block_size_bytes = block_size_bytes_;
-  initial_metadata.graph_entry_point_ptr = graph_entry_point_ptr_;
+  if (graph_operations_) { // Get current entry point (likely invalid/null
+                           // initially)
+    initial_metadata.graph_entry_point_ptr =
+        graph_operations_->GetGraphEntryPointPointer();
+  } else {
+    initial_metadata.graph_entry_point_ptr
+        .Clear(); // Should not happen if constructor ran
+  }
   initial_metadata.delete_queue_head_ptr = delete_queue_head_ptr_;
-  // initial_metadata.rowid_map_root_ptr = rowid_map_root_ptr_;
 
-  PersistMetadata(db_state_.metadata_ptr, db_state_.db, *db_state_.allocator,
-                  initial_metadata);
+  PersistMetadata(db_state_.metadata_ptr, db_state_.db,
+                  node_manager_->GetAllocator(), initial_metadata);
   is_dirty_ = true;
 }
 
@@ -673,14 +660,15 @@ void LmDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
  * @param storage_info Storage information provided by DuckDB during load.
  */
 void LmDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
-  if (!db_state_.allocator || db_state_.metadata_ptr.Get() == 0) {
+  if (!node_manager_ ||
+      db_state_.metadata_ptr.Get() == 0) { // Check Get() != 0 for metadata_ptr
     throw InternalException(
-        "Allocator or metadata pointer invalid in LoadFromStorage");
+        "NodeManager or metadata pointer invalid in LoadFromStorage");
   }
 
   LmDiskannMetadata loaded_metadata;
-  LoadMetadata(db_state_.metadata_ptr, db_state_.db, *db_state_.allocator,
-               loaded_metadata);
+  LoadMetadata(db_state_.metadata_ptr, db_state_.db,
+               node_manager_->GetAllocator(), loaded_metadata);
 
   if (loaded_metadata.format_version != format_version_) {
     throw IOException(
@@ -697,10 +685,7 @@ void LmDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
   config_.alpha = loaded_metadata.alpha;
   config_.l_search = loaded_metadata.l_search;
   block_size_bytes_ = loaded_metadata.block_size_bytes;
-  graph_entry_point_ptr_ = loaded_metadata.graph_entry_point_ptr;
   delete_queue_head_ptr_ = loaded_metadata.delete_queue_head_ptr;
-  // rowid_map_root_ptr_ = loaded_metadata.rowid_map_root_ptr; // TODO: Load ART
-  // root
 
   node_layout_ = CalculateLayoutInternal(config_);
   idx_t expected_block_size =
@@ -711,27 +696,28 @@ void LmDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
         "size (%lld) based on loaded parameters.",
         block_size_bytes_, expected_block_size));
   }
-  // TODO: Implement block size validation logic
-  // This section checks if the block size of the allocator matches the expected
-  // loaded block size. If they do not match, an IOException is thrown to
-  // indicate a potential inconsistency in the index state. if
-  // (db_state_.allocator->GetBlockSize() != block_size_bytes_) {
-  //   throw IOException(StringUtil::Format(
-  //       "LM_DISKANN allocator block size (%lld) does not match loaded block "
-  //       "size (%lld).",
-  //       db_state_.allocator->GetBlockSize(), block_size_bytes_));
-  // }
 
-  // TODO: Load ART and populate in-memory map placeholder
-  Printer::Print("Warning: LmDiskannIndex loaded, but in-memory RowID map NOT "
-                 "populated from storage (ART integration needed).");
+  // TODO: NodeManager should handle populating its RowID map from storage
+  // (e.g., by scanning allocator blocks if no ART yet)
+  Printer::Print(
+      "Warning: LmDiskannIndex loaded, but NodeManager's RowID map NOT "
+      "populated from storage (full scan or ART integration in NodeManager "
+      "needed). This may lead to issues.");
 
-  if (graph_entry_point_ptr_.Get() != 0) {
-    // FIXME: GetEntryPointRowId needs implementation (or RowID stored in node)
-    graph_entry_point_rowid_ = GetEntryPointRowId(
-        graph_entry_point_ptr_, db_state_.db, *db_state_.allocator);
+  row_t loaded_entry_point_rowid = NumericLimits<row_t>::Maximum();
+  if (loaded_metadata.graph_entry_point_ptr.Get() != 0) {
+    loaded_entry_point_rowid =
+        GetEntryPointRowId(loaded_metadata.graph_entry_point_ptr, db_state_.db,
+                           node_manager_->GetAllocator());
+  }
+
+  if (graph_operations_) {
+    graph_operations_->SetLoadedEntryPoint(
+        loaded_metadata.graph_entry_point_ptr, loaded_entry_point_rowid);
   } else {
-    graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum();
+    // This case should ideally not be reached if constructor logic is sound
+    Printer::Print("Warning: GraphOperations not initialized during "
+                   "LoadFromStorage when trying to set entry point.");
   }
 
   is_dirty_ = false;
@@ -812,111 +798,10 @@ LmDiskannIndex::CalculateExactDistance<float, int8_t>(const float *,
                                                       const_data_ptr_t);
 
 // --- Insertion Helper --- //
-/**
- * @brief Finds potential neighbors for a new node and connects them.
- * @details Performs a search starting from the entry point to find candidate
- * neighbors. Calls RobustPrune to select the final neighbors for the new node.
- *          Updates the selected neighbors to potentially add a reciprocal edge
- * back to the new node.
- * @param new_node_rowid RowID of the node being inserted.
- * @param new_node_ptr Pointer to the new node's block.
- * @param new_node_vector_float Pointer to the new node's vector data (as
- * float).
- */
-void LmDiskannIndex::FindAndConnectNeighbors(
-    row_t new_node_rowid, IndexPointer new_node_ptr,
-    const float *new_node_vector_float) {
-  row_t entry_point = GetEntryPoint();
-  if (entry_point == NumericLimits<row_t>::Maximum()) {
-    throw InternalException(
-        "FindAndConnectNeighbors called with no entry point.");
-  }
-
-  Vector query_vec_handle(
-      LogicalType::ARRAY(LogicalType::FLOAT, config_.dimensions));
-  memcpy(FlatVector::GetData<float>(query_vec_handle), new_node_vector_float,
-         config_.dimensions * sizeof(float));
-  query_vec_handle.Flatten(1);
-
-  LmDiskannScanState search_state(query_vec_handle, config_.l_insert,
-                                  config_.l_insert);
-  PerformSearch(search_state, *this, config_, false);
-
-  std::vector<std::pair<float, row_t>> potential_neighbors;
-  potential_neighbors.reserve(search_state.top_candidates.size() + 1);
-  while (!search_state.top_candidates.empty()) {
-    potential_neighbors.push_back(search_state.top_candidates.top());
-    search_state.top_candidates.pop();
-  }
-  potential_neighbors.push_back({0.0f, new_node_rowid}); // Add self
-
-  RobustPrune(new_node_rowid, new_node_ptr, potential_neighbors);
-
-  // --- Update Neighbors (Reciprocal Edges) --- //
-  auto new_node_data_ro = GetNodeData(new_node_ptr);
-  uint16_t final_new_neighbor_count =
-      NodeAccessors::GetNeighborCount(new_node_data_ro);
-  const row_t *final_new_neighbor_ids =
-      NodeAccessors::GetNeighborIDsPtr(new_node_data_ro, node_layout_);
-
-  vector<uint8_t> new_node_compressed_storage(
-      node_layout_.ternary_edge_size_bytes);
-  CompressVectorForEdge(new_node_vector_float,
-                        new_node_compressed_storage.data());
-
-  vector<float> neighbor_float_vec(config_.dimensions);
-  for (uint16_t i = 0; i < final_new_neighbor_count; ++i) {
-    row_t neighbor_rowid = final_new_neighbor_ids[i];
-    if (neighbor_rowid == NumericLimits<row_t>::Maximum())
-      continue;
-
-    IndexPointer neighbor_ptr;
-    if (!TryGetNodePointer(neighbor_rowid, neighbor_ptr))
-      continue;
-
-    std::vector<std::pair<float, row_t>> neighbor_candidates;
-    try {
-      const_data_ptr_t neighbor_data_ro;
-      const_data_ptr_t neighbor_vec_ptr_raw;
-
-      neighbor_data_ro = GetNodeData(neighbor_ptr);
-      neighbor_vec_ptr_raw =
-          NodeAccessors::GetNodeVector(neighbor_data_ro, node_layout_);
-      ConvertNodeVectorToFloat(neighbor_vec_ptr_raw, neighbor_float_vec.data());
-
-      float dist_neighbor_to_new = ComputeExactDistanceFloat(
-          neighbor_float_vec.data(), new_node_vector_float, config_.dimensions,
-          config_.metric_type);
-
-      neighbor_candidates.push_back({dist_neighbor_to_new, new_node_rowid});
-
-      RobustPrune(neighbor_rowid, neighbor_ptr, neighbor_candidates);
-
-    } catch (const std::exception &e) {
-      Printer::Print(StringUtil::Format(
-          "Warning: Failed to update neighbor %lld for new node %lld: %s",
-          neighbor_rowid, new_node_rowid, e.what()));
-    }
-  }
-}
+// FindAndConnectNeighbors and its helpers like RobustPrune (member version) are
+// removed.
 
 // --- Deletion Helper --- //
-/**
- * @brief Adds a row ID to the persistent deletion queue.
- * @param deleted_row_id The row ID of the node marked for deletion.
- */
-void LmDiskannIndex::EnqueueDeletion(row_t deleted_row_id) {
-  duckdb::EnqueueDeletion(deleted_row_id, delete_queue_head_ptr_, db_state_.db,
-                          *db_state_.allocator);
-  is_dirty_ = true;
-}
-
-/**
- * @brief Processes the deletion queue (Placeholder).
- * @warning Not implemented. Intended to be called during VACUUM.
- */
-void LmDiskannIndex::ProcessDeletionQueue() {
-  Printer::Print("LmDiskannIndex::ProcessDeletionQueue is not implemented.");
-}
+// EnqueueDeletion (member version) and ProcessDeletionQueue are removed.
 
 } // namespace duckdb

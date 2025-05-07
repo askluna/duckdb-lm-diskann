@@ -158,7 +158,7 @@ public:
   /** @brief Get the attached database reference. */
   AttachedDatabase &GetAttachedDatabase() const { return db_state_.db; }
   /** @brief Get the fixed size allocator reference. */
-  FixedSizeAllocator &GetAllocator() const { return *db_state_.allocator; }
+  FixedSizeAllocator &GetAllocator() { return node_manager_->GetAllocator(); }
   /** @brief Get the calculated node layout offsets. */
   const NodeLayoutOffsets &GetNodeLayout() const { return node_layout_; }
   /** @brief Get the vector dimensions. */
