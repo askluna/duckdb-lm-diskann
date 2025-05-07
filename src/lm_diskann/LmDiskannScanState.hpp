@@ -18,6 +18,7 @@
 #include <utility> // For std::pair
 #include <vector>
 
+namespace diskann {
 namespace duckdb {
 
 /**
@@ -28,24 +29,25 @@ namespace duckdb {
  *          the candidate priority queue for the beam search, the set of visited
  * nodes, and the final top-k results found so far.
  */
-struct LmDiskannScanState : public IndexScanState {
+struct LmDiskannScanState : public ::duckdb::IndexScanState {
   /**
    * @brief Constructor for LmDiskannScanState.
    * @param query_vec The query vector.
    * @param k_param The number of nearest neighbors requested (top-k).
    * @param l_search_param The search list size parameter (L_search).
    */
-  LmDiskannScanState(const Vector &query_vec, idx_t k_param,
+  LmDiskannScanState(const ::duckdb::Vector &query_vec, idx_t k_param,
                      uint32_t l_search_param);
 
-  Vector query_vector; // The query vector itself (keeps data alive).
-  const_data_ptr_t query_vector_ptr; // Pointer to the query vector data
-                                     // (usually float). Cast before use.
-  idx_t k;                           // Number of nearest neighbors requested.
-  uint32_t l_search;                 // Search list size parameter (L_search).
+  ::duckdb::Vector query_vector; // The query vector itself (keeps data alive).
+  ::duckdb::const_data_ptr_t
+      query_vector_ptr; // Pointer to the query vector data
+                        // (usually float). Cast before use.
+  idx_t k;              // Number of nearest neighbors requested.
+  uint32_t l_search;    // Search list size parameter (L_search).
 
   // Type alias for distance/node pairs (using float for distance).
-  using dist_node_pair_t = std::pair<float, row_t>;
+  using dist_node_pair_t = std::pair<float, ::duckdb::row_t>;
 
   // Min-priority queue for candidates (stores {-distance, node_id} to get max
   // distance at top). We use negative distance because priority_queue is a
@@ -59,7 +61,7 @@ struct LmDiskannScanState : public IndexScanState {
 
   // Set of nodes (RowIDs) already visited during the search to avoid
   // cycles/redundancy.
-  std::set<row_t> visited;
+  std::set<::duckdb::row_t> visited;
 
   // --- Fields below might be used by the IndexScanExecutor --- //
   // std::vector<row_t> result_rowids; // Row IDs of potential candidates -
@@ -68,3 +70,4 @@ struct LmDiskannScanState : public IndexScanState {
 };
 
 } // namespace duckdb
+} // namespace diskann

@@ -44,7 +44,7 @@ inline idx_t GetPlaneSizeBytes(const ::diskann::duckdb::LmDiskannIndex &index) {
   return GetTernaryPlaneSizeBytes(dimensions);
 }
 
-void PerformSearch(::duckdb::LmDiskannScanState &scan_state,
+void PerformSearch(LmDiskannScanState &scan_state,
                    ::diskann::duckdb::LmDiskannIndex &index,
                    const LmDiskannConfig &config, bool find_exact_distances) {
   // Max-heap for candidates (stores {distance, node_id}) - we want smallest
