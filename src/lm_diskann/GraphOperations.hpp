@@ -13,10 +13,11 @@
 #include <utility> // For std::pair
 #include <vector>
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
 // Forward declarations
-class NodeManager;    // Updated from LmDiskannNodeManager
+class StorageManager; // Updated from LmDiskannStorageManager
 class LmDiskannIndex; // For calling PerformSearch or other index context
 class LmDiskannScanState;
 class RandomEngine;
@@ -33,7 +34,7 @@ public:
    */
   GraphOperations(const LmDiskannConfig &config,
                   const NodeLayoutOffsets &node_layout,
-                  NodeManager &node_manager, LmDiskannIndex &index_context);
+                  StorageManager &node_manager, LmDiskannIndex &index_context);
 
   /**
    * @brief Processes the insertion of a new node into the graph.
@@ -43,7 +44,8 @@ public:
    * @param new_node_vector_float Pointer to the new node's vector data (as
    * float).
    */
-  void InsertNode(row_t new_node_rowid, IndexPointer new_node_ptr,
+  void InsertNode(::duckdb::row_t new_node_rowid,
+                  ::duckdb::IndexPointer new_node_ptr,
                   const float *new_node_vector_float);
 
   /**
@@ -52,7 +54,7 @@ public:
    *          Future enhancements could include graph repair.
    * @param deleted_node_rowid The row_id of the node that was deleted.
    */
-  void HandleNodeDeletion(row_t deleted_node_rowid);
+  void HandleNodeDeletion(::duckdb::row_t deleted_node_rowid);
 
   /**
    * @brief Selects a valid entry point for starting a search.
@@ -60,28 +62,28 @@ public:
    * @param engine A random engine to use for selecting a random node if needed.
    * @return A valid row_t to be used as a search entry point.
    */
-  row_t SelectEntryPointForSearch(RandomEngine &engine);
+  ::duckdb::row_t SelectEntryPointForSearch(RandomEngine &engine);
 
   /**
    * @brief Gets the current graph entry point pointer.
    * @return IndexPointer to the entry point node. Can be invalid if no entry
    * point.
    */
-  IndexPointer GetGraphEntryPointPointer() const;
+  ::duckdb::IndexPointer GetGraphEntryPointPointer() const;
 
   /**
    * @brief Gets the row_id of the current graph entry point.
    * @return row_t of the entry point node. Can be
    * NumericLimits<row_t>::Maximum() if no entry point.
    */
-  row_t GetGraphEntryPointRowId() const;
+  ::duckdb::row_t GetGraphEntryPointRowId() const;
 
   /**
    * @brief Sets the entry point state loaded from persisted metadata.
    * @param ptr The IndexPointer to the entry point node.
    * @param row_id The row_t of the entry point node.
    */
-  void SetLoadedEntryPoint(IndexPointer ptr, row_t row_id);
+  void SetLoadedEntryPoint(::duckdb::IndexPointer ptr, ::duckdb::row_t row_id);
 
 private:
   /**
@@ -94,9 +96,9 @@ private:
    * @param is_new_node_prune True if this is pruning for a brand new node
    * (slightly different logic for existing neighbors).
    */
-  void RobustPrune(row_t node_rowid, IndexPointer node_ptr,
+  void RobustPrune(::duckdb::row_t node_rowid, ::duckdb::IndexPointer node_ptr,
                    const float *node_vector_float,
-                   std::vector<std::pair<float, row_t>> &candidates,
+                   std::vector<std::pair<float, ::duckdb::row_t>> &candidates,
                    bool is_new_node_prune);
 
   /**
@@ -106,22 +108,24 @@ private:
    * @param scan_list_size The beam width for the search.
    * @return A vector of (distance, row_id) pairs for candidate neighbors.
    */
-  std::vector<std::pair<float, row_t>>
+  std::vector<std::pair<float, ::duckdb::row_t>>
   SearchForCandidates(const float *target_vector_float, uint32_t K,
                       uint32_t scan_list_size);
 
   const LmDiskannConfig &config_;
   const NodeLayoutOffsets &node_layout_;
-  NodeManager &node_manager_; // Updated from LmDiskannNodeManager
+  StorageManager &node_manager_; // Updated from LmDiskannStorageManager
   LmDiskannIndex
       &index_context_; // Provides context, e.g., PerformSearch capability
 
   // --- Entry Point State (Owned by GraphOperations) ---
   /** @brief Pointer to the current graph entry point node. Initialized to
    * invalid. */
-  IndexPointer graph_entry_point_ptr_;
-  /** @brief Cached row_id of the entry point node. Initialized to invalid. */
-  row_t graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum();
+  ::duckdb::IndexPointer graph_entry_point_ptr_;
+  /** @brief Cached row_t of the entry point node. Initialized to invalid. */
+  ::duckdb::row_t graph_entry_point_rowid_ =
+      ::duckdb::NumericLimits<::duckdb::row_t>::Maximum();
 };
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

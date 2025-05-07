@@ -10,9 +10,9 @@
 // Include refactored component headers
 #include "GraphOperations.hpp" // New
 #include "LmDiskannScanState.hpp"
-#include "NodeAccessors.hpp" // Now directly used by GraphOperations primarily
-#include "NodeManager.hpp"   // New
-#include "distance.hpp"      // For distance/conversion functions
+#include "NodeAccessors.hpp"  // Now directly used by GraphOperations primarily
+#include "StorageManager.hpp" // New
+#include "distance.hpp"       // For distance/conversion functions
 #include "index_config.hpp"
 #include "search.hpp"  // For PerformSearch
 #include "storage.hpp" // For Load/PersistMetadata, GetEntryPointRowId etc.
@@ -53,6 +53,9 @@
 #include "duckdb/storage/storage_manager.hpp" // Required for StorageManager
 #include "duckdb/storage/table_io_manager.hpp"
 
+using namespace ::duckdb;
+
+namespace diskann {
 namespace duckdb {
 
 // --- LmDiskannIndex Constructor --- //
@@ -72,9 +75,10 @@ LmDiskannIndex::LmDiskannIndex(
     : BoundIndex(name, LmDiskannIndex::TYPE_NAME, index_constraint_type,
                  column_ids, table_io_manager, unbound_expressions, db),
       db_state_(db, table_io_manager, unbound_expressions[0]->return_type),
-      format_version_(LMDISKANN_CURRENT_FORMAT_VERSION), is_dirty_(false) {
+      format_version_(core::LMDISKANN_CURRENT_FORMAT_VERSION),
+      is_dirty_(false) {
   // 1. Parse WITH clause options into the config struct
-  config_ = ParseOptions(options);
+  config_ = core::ParseOptions(options);
 
   // 2. Derive dimensions and node_vector_type from the indexed column type
   if (db_state_.indexed_column_type.id() != LogicalTypeId::ARRAY ||
@@ -90,9 +94,9 @@ LmDiskannIndex::LmDiskannIndex(
   auto array_child_type =
       ArrayType::GetChildType(db_state_.indexed_column_type);
   if (array_child_type.id() == LogicalTypeId::FLOAT) {
-    config_.node_vector_type = LmDiskannVectorType::FLOAT32;
+    config_.node_vector_type = core::LmDiskannVectorType::FLOAT32;
   } else if (array_child_type.id() == LogicalTypeId::TINYINT) {
-    config_.node_vector_type = LmDiskannVectorType::INT8;
+    config_.node_vector_type = core::LmDiskannVectorType::INT8;
   } else {
     throw BinderException(
         "LM_DISKANN index ARRAY child type must be FLOAT or TINYINT, found: " +
@@ -109,14 +113,14 @@ LmDiskannIndex::LmDiskannIndex(
   block_size_bytes_ =
       AlignValue<idx_t, Storage::SECTOR_SIZE>(node_layout_.total_node_size);
 
-  // 6. Initialize NodeManager which creates its own FixedSizeAllocator
+  // 6. Initialize StorageManager which creates its own FixedSizeAllocator
   auto &buffer_manager = BufferManager::GetBufferManager(db_state_.db);
-  node_manager_ = make_uniq<NodeManager>(buffer_manager, block_size_bytes_);
+  node_manager_ = make_uniq<StorageManager>(buffer_manager, block_size_bytes_);
 
   // Instantiate GraphOperations (needs config, layout, node_manager, and this
   // index context)
-  graph_operations_ =
-      make_uniq<GraphOperations>(config_, node_layout_, *node_manager_, *this);
+  graph_operations_ = make_uniq<core::GraphOperations>(config_, node_layout_,
+                                                       *node_manager_, *this);
 
   // Determine and create the index-specific directory path
   // This path will be used by InitializeNewIndex or LoadFromStorage
@@ -237,16 +241,17 @@ void LmDiskannIndex::PublicConvertNodeVectorToFloat(
  * chunk.
  * @return ErrorData indicating success or failure.
  */
-ErrorData LmDiskannIndex::Append(IndexLock &lock, DataChunk &input,
-                                 Vector &row_ids) {
+::duckdb::ErrorData LmDiskannIndex::Append(::duckdb::IndexLock &lock,
+                                           ::duckdb::DataChunk &input,
+                                           ::duckdb::Vector &row_ids) {
   if (input.size() == 0) {
-    return ErrorData();
+    return ::duckdb::ErrorData();
   }
   row_ids.Flatten(input.size());
 
-  DataChunk input_chunk;
+  ::duckdb::DataChunk input_chunk;
   input_chunk.InitializeEmpty({db_state_.indexed_column_type});
-  Vector row_id_vector(LogicalType::ROW_TYPE);
+  ::duckdb::Vector row_id_vector(LogicalType::ROW_TYPE);
 
   for (idx_t i = 0; i < input.size(); ++i) {
     input_chunk.Reset();
@@ -275,7 +280,8 @@ void LmDiskannIndex::CommitDrop(IndexLock &index_lock) {
     node_manager_->Reset();
   }
   db_state_.metadata_ptr.Clear();
-  // in_memory_rowid_map_ is managed by NodeManager and cleared in its Reset()
+  // in_memory_rowid_map_ is managed by StorageManager and cleared in its
+  // Reset()
   delete_queue_head_ptr_.Clear();
 }
 
@@ -288,10 +294,11 @@ void LmDiskannIndex::CommitDrop(IndexLock &index_lock) {
  * row_id).
  * @param row_identifiers Vector of row identifiers to delete.
  */
-void LmDiskannIndex::Delete(IndexLock &lock, DataChunk &entries,
-                            Vector &row_identifiers) {
+void LmDiskannIndex::Delete(::duckdb::IndexLock &lock,
+                            ::duckdb::DataChunk &entries,
+                            ::duckdb::Vector &row_identifiers) {
   row_identifiers.Flatten(entries.size());
-  auto row_ids_data = FlatVector::GetData<row_t>(row_identifiers);
+  auto row_ids_data = ::duckdb::FlatVector::GetData<row_t>(row_identifiers);
   bool changes_made = false;
 
   for (idx_t i = 0; i < entries.size(); ++i) {
@@ -301,8 +308,8 @@ void LmDiskannIndex::Delete(IndexLock &lock, DataChunk &entries,
         node_manager_->FreeNode(row_id);
       }
       if (node_manager_) { // Need allocator for the global EnqueueDeletion
-        duckdb::EnqueueDeletion(row_id, delete_queue_head_ptr_, db_state_.db,
-                                node_manager_->GetAllocator());
+        EnqueueDeletion(row_id, delete_queue_head_ptr_, db_state_.db,
+                        node_manager_->GetAllocator());
       }
 
       if (graph_operations_) {
@@ -333,10 +340,11 @@ void LmDiskannIndex::Delete(IndexLock &lock, DataChunk &entries,
  * @param row_ids Vector containing the single row identifier for the vector.
  * @return ErrorData indicating success or failure.
  */
-ErrorData LmDiskannIndex::Insert(IndexLock &lock, DataChunk &data,
-                                 Vector &row_ids) {
+::duckdb::ErrorData LmDiskannIndex::Insert(::duckdb::IndexLock &lock,
+                                           ::duckdb::DataChunk &data,
+                                           ::duckdb::Vector &row_ids) {
   if (data.size() == 0) {
-    return ErrorData();
+    return ::duckdb::ErrorData();
   }
   D_ASSERT(data.size() == 1);
   D_ASSERT(data.ColumnCount() == 1);
@@ -351,10 +359,10 @@ ErrorData LmDiskannIndex::Insert(IndexLock &lock, DataChunk &data,
   vector<float> input_vector_float_storage(config_.dimensions);
   const float *input_vector_float_ptr = nullptr;
   try {
-    if (config_.node_vector_type == LmDiskannVectorType::FLOAT32) {
+    if (config_.node_vector_type == core::LmDiskannVectorType::FLOAT32) {
       input_vector_float_ptr =
           reinterpret_cast<const float *>(input_vector_raw_ptr);
-    } else if (config_.node_vector_type == LmDiskannVectorType::INT8) {
+    } else if (config_.node_vector_type == core::LmDiskannVectorType::INT8) {
       ConvertNodeVectorToFloat(input_vector_raw_ptr,
                                input_vector_float_storage.data());
       input_vector_float_ptr = input_vector_float_storage.data();
@@ -374,7 +382,7 @@ ErrorData LmDiskannIndex::Insert(IndexLock &lock, DataChunk &data,
   IndexPointer new_node_ptr;
   try {
     if (!node_manager_) {
-      return ErrorData("NodeManager not initialized during Insert.");
+      return ErrorData("StorageManager not initialized during Insert.");
     }
     new_node_ptr = node_manager_->AllocateNode(row_id);
   } catch (const std::exception &e) {
@@ -385,16 +393,16 @@ ErrorData LmDiskannIndex::Insert(IndexLock &lock, DataChunk &data,
   try {
     if (!node_manager_) {
       return ErrorData(
-          "NodeManager not initialized before GetNodeDataMutable.");
+          "StorageManager not initialized before GetNodeDataMutable.");
     }
     new_node_data = node_manager_->GetNodeDataMutable(new_node_ptr);
 
-    NodeAccessors::InitializeNodeBlock(new_node_data, block_size_bytes_);
+    core::NodeAccessors::InitializeNodeBlock(new_node_data, block_size_bytes_);
 
-    memcpy(NodeAccessors::GetNodeVectorMutable(new_node_data, node_layout_),
-           input_vector_raw_ptr,
-           GetVectorTypeSizeBytes(config_.node_vector_type) *
-               config_.dimensions);
+    memcpy(
+        core::NodeAccessors::GetNodeVectorMutable(new_node_data, node_layout_),
+        input_vector_raw_ptr,
+        GetVectorTypeSizeBytes(config_.node_vector_type) * config_.dimensions);
 
     if (!graph_operations_) {
       return ErrorData("GraphOperations not initialized during Insert.");
@@ -442,7 +450,7 @@ idx_t LmDiskannIndex::GetInMemorySize() {
   idx_t base_size = 0;
   if (node_manager_) {
     base_size +=
-        node_manager_->GetInMemorySize(); // NodeManager's size includes its
+        node_manager_->GetInMemorySize(); // StorageManager's size includes its
                                           // allocator and map
   }
   return base_size;
@@ -497,7 +505,7 @@ string LmDiskannIndex::VerifyAndToString(IndexLock &state,
       "\n - Allocator Blocks Used: %lld",
       node_manager_ ? node_manager_->GetAllocator().GetSegmentCount() : 0);
   result +=
-      StringUtil::Format("\n - Node Count (from NodeManager): %lld",
+      StringUtil::Format("\n - Node Count (from StorageManager): %lld",
                          node_manager_ ? node_manager_->GetNodeCount() : 0);
   result += StringUtil::Format(
       "\n - Entry Point RowID (from GraphOperations): %lld",
@@ -533,7 +541,8 @@ void LmDiskannIndex::VerifyAllocations(IndexLock &state) {
  * @return Static error message.
  */
 string LmDiskannIndex::GetConstraintViolationMessage(
-    VerifyExistenceType verify_type, idx_t failed_index, DataChunk &input) {
+    ::duckdb::VerifyExistenceType verify_type, idx_t failed_index,
+    ::duckdb::DataChunk &input) {
   return "Constraint violation in LM_DISKANN index (Not supported)";
 }
 
@@ -549,8 +558,8 @@ string LmDiskannIndex::GetConstraintViolationMessage(
  * 0.
  */
 unique_ptr<IndexScanState>
-LmDiskannIndex::InitializeScan(ClientContext &context,
-                               const Vector &query_vector, idx_t k) {
+LmDiskannIndex::InitializeScan(::duckdb::ClientContext &context,
+                               const ::duckdb::Vector &query_vector, idx_t k) {
   if (query_vector.GetType().id() != LogicalTypeId::ARRAY ||
       ArrayType::GetChildType(query_vector.GetType()).id() !=
           LogicalTypeId::FLOAT) {
@@ -582,10 +591,11 @@ LmDiskannIndex::InitializeScan(ClientContext &context,
  * @param result The output vector to store resulting RowIDs.
  * @return The number of results produced in this step (up to vector size or k).
  */
-idx_t LmDiskannIndex::Scan(IndexScanState &state, Vector &result) {
+idx_t LmDiskannIndex::Scan(::duckdb::IndexScanState &state,
+                           ::duckdb::Vector &result) {
   auto &scan_state = state.Cast<LmDiskannScanState>();
   idx_t output_count = 0;
-  auto result_data = FlatVector::GetData<row_t>(result);
+  auto result_data = ::duckdb::FlatVector::GetData<row_t>(result);
 
   // Perform the beam search, populating scan_state.top_candidates
   PerformSearch(scan_state, *this, config_,
@@ -623,14 +633,14 @@ idx_t LmDiskannIndex::Scan(IndexScanState &state, Vector &result) {
 void LmDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
   if (!node_manager_) {
     throw InternalException(
-        "NodeManager not initialized in InitializeNewIndex");
+        "StorageManager not initialized in InitializeNewIndex");
   }
   db_state_.metadata_ptr = node_manager_->GetAllocator().New();
   delete_queue_head_ptr_.Clear();
   // GraphOperations state is managed internally. Entry point is initially
   // invalid.
 
-  LmDiskannMetadata initial_metadata;
+  core::LmDiskannMetadata initial_metadata;
   initial_metadata.format_version = format_version_;
   initial_metadata.metric_type = config_.metric_type;
   initial_metadata.node_vector_type = config_.node_vector_type;
@@ -663,10 +673,10 @@ void LmDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
   if (!node_manager_ ||
       db_state_.metadata_ptr.Get() == 0) { // Check Get() != 0 for metadata_ptr
     throw InternalException(
-        "NodeManager or metadata pointer invalid in LoadFromStorage");
+        "StorageManager or metadata pointer invalid in LoadFromStorage");
   }
 
-  LmDiskannMetadata loaded_metadata;
+  core::LmDiskannMetadata loaded_metadata;
   LoadMetadata(db_state_.metadata_ptr, db_state_.db,
                node_manager_->GetAllocator(), loaded_metadata);
 
@@ -697,11 +707,11 @@ void LmDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
         block_size_bytes_, expected_block_size));
   }
 
-  // TODO: NodeManager should handle populating its RowID map from storage
+  // TODO: StorageManager should handle populating its RowID map from storage
   // (e.g., by scanning allocator blocks if no ART yet)
   Printer::Print(
-      "Warning: LmDiskannIndex loaded, but NodeManager's RowID map NOT "
-      "populated from storage (full scan or ART integration in NodeManager "
+      "Warning: LmDiskannIndex loaded, but StorageManager's RowID map NOT "
+      "populated from storage (full scan or ART integration in StorageManager "
       "needed). This may lead to issues.");
 
   row_t loaded_entry_point_rowid = NumericLimits<row_t>::Maximum();
@@ -735,8 +745,8 @@ void LmDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
  */
 float LmDiskannIndex::CalculateApproxDistance(
     const float *query_ptr, const_data_ptr_t compressed_neighbor_ptr) {
-  return duckdb::CalculateApproxDistance(query_ptr, compressed_neighbor_ptr,
-                                         config_);
+  return core::CalculateApproxDistance(query_ptr, compressed_neighbor_ptr,
+                                       config_);
 }
 
 /**
@@ -747,8 +757,7 @@ float LmDiskannIndex::CalculateApproxDistance(
  */
 void LmDiskannIndex::CompressVectorForEdge(
     const float *input_vector, data_ptr_t output_compressed_vector) {
-  if (!duckdb::CompressVectorForEdge(input_vector, output_compressed_vector,
-                                     config_)) {
+  if (!CompressVectorForEdge(input_vector, output_compressed_vector, config_)) {
     throw InternalException("Failed to compress vector into Ternary format.");
   }
 }
@@ -805,3 +814,4 @@ LmDiskannIndex::CalculateExactDistance<float, int8_t>(const float *,
 // EnqueueDeletion (member version) and ProcessDeletionQueue are removed.
 
 } // namespace duckdb
+} // namespace diskann

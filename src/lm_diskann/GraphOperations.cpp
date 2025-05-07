@@ -7,7 +7,7 @@
 #include "LmDiskannIndex.hpp"     // For LmDiskannIndex context (PerformSearch)
 #include "LmDiskannScanState.hpp" // For creating scan states for internal searches
 #include "NodeAccessors.hpp"      // For direct block manipulation
-#include "NodeManager.hpp"        // For node access
+#include "StorageManager.hpp"     // For node access
 #include "distance.hpp" // For ComputeExactDistanceFloat and other distance utils
 
 #include "duckdb/common/limits.hpp"
@@ -19,11 +19,12 @@
 #include <queue>     // For PerformSearch's priority_queue if replicated here
 #include <vector>
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
 GraphOperations::GraphOperations(const LmDiskannConfig &config,
                                  const NodeLayoutOffsets &node_layout,
-                                 NodeManager &node_manager,
+                                 StorageManager &node_manager,
                                  LmDiskannIndex &index_context)
     : config_(config), node_layout_(node_layout), node_manager_(node_manager),
       index_context_(index_context) {}
@@ -32,15 +33,15 @@ GraphOperations::GraphOperations(const LmDiskannConfig &config,
 // call it via index_context_ This is a complex function that might be better
 // called via index_context if PerformSearch remains public/friend For now, a
 // simplified sketch that shows how it might be used internally.
-std::vector<std::pair<float, row_t>>
+std::vector<std::pair<float, ::duckdb::row_t>>
 GraphOperations::SearchForCandidates(const float *target_vector_float,
                                      uint32_t K, uint32_t scan_list_size) {
 
   // Create a temporary DuckDB vector for the query
-  Vector query_vec_handle(
-      LogicalType::ARRAY(LogicalType::FLOAT, config_.dimensions));
-  memcpy(FlatVector::GetData<float>(query_vec_handle), target_vector_float,
-         config_.dimensions * sizeof(float));
+  ::duckdb::Vector query_vec_handle(::duckdb::LogicalType::ARRAY(
+      ::duckdb::LogicalType::FLOAT, config_.dimensions));
+  memcpy(::duckdb::FlatVector::GetData<float>(query_vec_handle),
+         target_vector_float, config_.dimensions * sizeof(float));
   query_vec_handle.Flatten(1);
 
   // Initialize a scan state for this internal search
@@ -54,7 +55,7 @@ GraphOperations::SearchForCandidates(const float *target_vector_float,
   // PerformSearch (if it was made so, or called via index_context_)
   PerformSearch(search_state, index_context_, this->config_, false);
 
-  std::vector<std::pair<float, row_t>> candidates;
+  std::vector<std::pair<float, ::duckdb::row_t>> candidates;
   candidates.reserve(search_state.top_candidates.size());
   while (!search_state.top_candidates.empty()) {
     candidates.push_back(search_state.top_candidates.top());
@@ -69,22 +70,24 @@ GraphOperations::SearchForCandidates(const float *target_vector_float,
 }
 
 void GraphOperations::RobustPrune(
-    row_t node_rowid, IndexPointer node_ptr, const float *node_vector_float,
-    std::vector<std::pair<float, row_t>> &candidates, bool is_new_node_prune) {
+    ::duckdb::row_t node_rowid, ::duckdb::IndexPointer node_ptr,
+    const float *node_vector_float,
+    std::vector<std::pair<float, ::duckdb::row_t>> &candidates,
+    bool is_new_node_prune) {
 
   uint32_t max_neighbors = config_.r;
-  data_ptr_t node_data = node_manager_.GetNodeDataMutable(node_ptr);
+  ::duckdb::data_ptr_t node_data = node_manager_.GetNodeDataMutable(node_ptr);
 
   // If this is not a new node, add its existing neighbors to the candidate set
   if (!is_new_node_prune) {
     uint16_t current_neighbor_count =
         NodeAccessors::GetNeighborCount(node_data);
-    const row_t *current_neighbor_ids =
+    const ::duckdb::row_t *current_neighbor_ids =
         NodeAccessors::GetNeighborIDsPtr(node_data, node_layout_);
 
     for (uint16_t i = 0; i < current_neighbor_count; ++i) {
-      row_t existing_id = current_neighbor_ids[i];
-      if (existing_id == NumericLimits<row_t>::Maximum())
+      ::duckdb::row_t existing_id = current_neighbor_ids[i];
+      if (existing_id == ::duckdb::NumericLimits<::duckdb::row_t>::Maximum())
         continue;
 
       bool already_candidate = false;
@@ -124,29 +127,29 @@ void GraphOperations::RobustPrune(
   // Sort again by distance for alpha pruning
   std::sort(candidates.begin(), candidates.end());
 
-  std::vector<row_t> final_neighbor_ids;
-  std::vector<vector<uint8_t>>
+  std::vector<::duckdb::row_t> final_neighbor_ids;
+  std::vector<std::vector<uint8_t>>
       final_compressed_neighbors_data; // Store full compressed edge
   final_neighbor_ids.reserve(max_neighbors);
   final_compressed_neighbors_data.reserve(max_neighbors);
 
-  vector<float> candidate_vector_float_storage(config_.dimensions);
+  ::duckdb::vector<float> candidate_vector_float_storage(config_.dimensions);
 
   for (const auto &candidate_pair : candidates) {
     if (final_neighbor_ids.size() >= max_neighbors)
       break;
 
-    row_t candidate_id = candidate_pair.second;
+    ::duckdb::row_t candidate_id = candidate_pair.second;
     if (candidate_id == node_rowid)
       continue; // Don't connect to self
 
-    IndexPointer candidate_node_ptr;
+    ::duckdb::IndexPointer candidate_node_ptr;
     if (!node_manager_.TryGetNodePointer(candidate_id, candidate_node_ptr))
       continue;
 
-    const_data_ptr_t candidate_raw_data =
+    ::duckdb::const_data_ptr_t candidate_raw_data =
         node_manager_.GetNodeData(candidate_node_ptr);
-    const_data_ptr_t candidate_raw_vector =
+    ::duckdb::const_data_ptr_t candidate_raw_vector =
         NodeAccessors::GetNodeVector(candidate_raw_data, node_layout_);
     index_context_.PublicConvertNodeVectorToFloat(
         candidate_raw_vector, candidate_vector_float_storage.data());
@@ -157,16 +160,17 @@ void GraphOperations::RobustPrune(
         config_.dimensions, config_.metric_type);
 
     for (size_t i = 0; i < final_neighbor_ids.size(); ++i) {
-      row_t existing_final_id = final_neighbor_ids[i];
-      IndexPointer existing_final_node_ptr;
+      ::duckdb::row_t existing_final_id = final_neighbor_ids[i];
+      ::duckdb::IndexPointer existing_final_node_ptr;
       if (!node_manager_.TryGetNodePointer(existing_final_id,
                                            existing_final_node_ptr))
         continue;
 
-      vector<float> existing_final_vector_float_storage(config_.dimensions);
-      const_data_ptr_t existing_final_raw_data =
+      ::duckdb::vector<float> existing_final_vector_float_storage(
+          config_.dimensions);
+      ::duckdb::const_data_ptr_t existing_final_raw_data =
           node_manager_.GetNodeData(existing_final_node_ptr);
-      const_data_ptr_t existing_final_raw_vector =
+      ::duckdb::const_data_ptr_t existing_final_raw_vector =
           NodeAccessors::GetNodeVector(existing_final_raw_data, node_layout_);
       index_context_.PublicConvertNodeVectorToFloat(
           existing_final_raw_vector,
@@ -196,13 +200,13 @@ void GraphOperations::RobustPrune(
 
   uint16_t final_count = static_cast<uint16_t>(final_neighbor_ids.size());
   NodeAccessors::SetNeighborCount(node_data, final_count);
-  row_t *dest_ids_ptr =
+  ::duckdb::row_t *dest_ids_ptr =
       NodeAccessors::GetNeighborIDsPtrMutable(node_data, node_layout_);
 
   idx_t plane_size_bytes = GetTernaryPlaneSizeBytes(config_.dimensions);
-  data_ptr_t dest_pos_planes_base =
+  ::duckdb::data_ptr_t dest_pos_planes_base =
       node_data + node_layout_.neighbor_pos_planes_offset;
-  data_ptr_t dest_neg_planes_base =
+  ::duckdb::data_ptr_t dest_neg_planes_base =
       node_data + node_layout_.neighbor_neg_planes_offset;
 
   for (uint16_t i = 0; i < final_count; ++i) {
@@ -215,18 +219,20 @@ void GraphOperations::RobustPrune(
   }
   // Clear out remaining neighbor slots
   for (uint16_t i = final_count; i < config_.r; ++i) {
-    dest_ids_ptr[i] = NumericLimits<row_t>::Maximum();
+    dest_ids_ptr[i] = ::duckdb::NumericLimits<::duckdb::row_t>::Maximum();
     memset(dest_pos_planes_base + i * plane_size_bytes, 0, plane_size_bytes);
     memset(dest_neg_planes_base + i * plane_size_bytes, 0, plane_size_bytes);
   }
 }
 
-void GraphOperations::InsertNode(row_t new_node_rowid,
-                                 IndexPointer new_node_ptr,
+void GraphOperations::InsertNode(::duckdb::row_t new_node_rowid,
+                                 ::duckdb::IndexPointer new_node_ptr,
                                  const float *new_node_vector_float) {
-  if (graph_entry_point_rowid_ == NumericLimits<row_t>::Maximum()) {
+  if (graph_entry_point_rowid_ ==
+      ::duckdb::NumericLimits<::duckdb::row_t>::Maximum()) {
     // This is the first node, set it as entry point with 0 neighbors
-    data_ptr_t new_node_data = node_manager_.GetNodeDataMutable(new_node_ptr);
+    ::duckdb::data_ptr_t new_node_data =
+        node_manager_.GetNodeDataMutable(new_node_ptr);
     NodeAccessors::SetNeighborCount(new_node_data, 0);
     graph_entry_point_rowid_ = new_node_rowid;
     graph_entry_point_ptr_ = new_node_ptr;
@@ -235,8 +241,9 @@ void GraphOperations::InsertNode(row_t new_node_rowid,
   }
 
   // Find candidate neighbors using search
-  std::vector<std::pair<float, row_t>> candidates = SearchForCandidates(
-      new_node_vector_float, config_.l_insert, config_.l_insert);
+  std::vector<std::pair<float, ::duckdb::row_t>> candidates =
+      SearchForCandidates(new_node_vector_float, config_.l_insert,
+                          config_.l_insert);
 
   // Add self to candidates for pruning with existing neighbors (if any were
   // added by RobustPrune's first pass) candidates.push_back({0.0f,
@@ -247,34 +254,35 @@ void GraphOperations::InsertNode(row_t new_node_rowid,
               true);
 
   // Update neighbors of the new node to point back (reciprocal edges)
-  const_data_ptr_t new_node_data_ro = node_manager_.GetNodeData(
+  ::duckdb::const_data_ptr_t new_node_data_ro = node_manager_.GetNodeData(
       new_node_ptr); // Read-only for its new neighbors
   uint16_t final_new_neighbor_count =
       NodeAccessors::GetNeighborCount(new_node_data_ro);
-  const row_t *final_new_neighbor_ids =
+  const ::duckdb::row_t *final_new_neighbor_ids =
       NodeAccessors::GetNeighborIDsPtr(new_node_data_ro, node_layout_);
 
-  vector<float> neighbor_node_vector_float_storage(config_.dimensions);
+  ::duckdb::vector<float> neighbor_node_vector_float_storage(
+      config_.dimensions);
 
   for (uint16_t i = 0; i < final_new_neighbor_count; ++i) {
-    row_t neighbor_rowid = final_new_neighbor_ids[i];
-    if (neighbor_rowid == NumericLimits<row_t>::Maximum() ||
+    ::duckdb::row_t neighbor_rowid = final_new_neighbor_ids[i];
+    if (neighbor_rowid == ::duckdb::NumericLimits<::duckdb::row_t>::Maximum() ||
         neighbor_rowid == new_node_rowid)
       continue;
 
-    IndexPointer neighbor_ptr;
+    ::duckdb::IndexPointer neighbor_ptr;
     if (!node_manager_.TryGetNodePointer(neighbor_rowid, neighbor_ptr))
       continue;
 
-    const_data_ptr_t neighbor_raw_data =
+    ::duckdb::const_data_ptr_t neighbor_raw_data =
         node_manager_.GetNodeData(neighbor_ptr);
-    const_data_ptr_t neighbor_raw_vector =
+    ::duckdb::const_data_ptr_t neighbor_raw_vector =
         NodeAccessors::GetNodeVector(neighbor_raw_data, node_layout_);
     index_context_.PublicConvertNodeVectorToFloat(
         neighbor_raw_vector, neighbor_node_vector_float_storage.data());
 
     // Create candidate list for the neighbor, including the new node
-    std::vector<std::pair<float, row_t>> neighbor_candidates;
+    std::vector<std::pair<float, ::duckdb::row_t>> neighbor_candidates;
     float dist_neighbor_to_new = ComputeExactDistanceFloat(
         neighbor_node_vector_float_storage.data(), new_node_vector_float,
         config_.dimensions, config_.metric_type);
@@ -361,4 +369,5 @@ void GraphOperations::SetLoadedEntryPoint(IndexPointer ptr, row_t row_id) {
   // from this operation.
 }
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

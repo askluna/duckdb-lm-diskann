@@ -16,7 +16,8 @@
 //     enum class LmDiskannMetricType : uint8_t;
 // }
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
 // Forward declare config struct if not fully included
 // struct LmDiskannConfig;
@@ -80,9 +81,9 @@ float CalculateDistance(const T_QUERY *query_ptr, const T_NODE *node_vector_ptr,
  * @param config The index configuration containing dimensions and metric type.
  * @return The calculated approximate distance.
  */
-float CalculateApproxDistance(const float *query_ptr,
-                              const_data_ptr_t compressed_neighbor_ptr,
-                              const LmDiskannConfig &config);
+float CalculateApproxDistance(
+    const float *query_ptr, ::duckdb::const_data_ptr_t compressed_neighbor_ptr,
+    const LmDiskannConfig &config);
 
 /**
  * @brief Compresses a vector into the TERNARY format for edge storage.
@@ -93,7 +94,7 @@ float CalculateApproxDistance(const float *query_ptr,
  * @return True if compression was successful, false otherwise.
  */
 bool CompressVectorForEdge(const float *input_vector,
-                           data_ptr_t output_compressed_vector,
+                           ::duckdb::data_ptr_t output_compressed_vector,
                            const LmDiskannConfig &config);
 
 /**
@@ -111,4 +112,5 @@ void ConvertToFloat(const T *input_vector, float *output_vector,
 // extern template void ConvertToFloat<int8_t>(const int8_t* input_vector,
 // float* output_vector, idx_t dimensions);
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

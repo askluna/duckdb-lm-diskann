@@ -12,7 +12,8 @@
 
 #include <cstdint>
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
 // Forward declare structs if not included via index_config.hpp
 // struct NodeLayoutOffsets;
@@ -34,7 +35,7 @@ public:
    * @param block_size_bytes Total size of the block (used for potential
    * clearing).
    */
-  static void InitializeNodeBlock(data_ptr_t node_block_ptr,
+  static void InitializeNodeBlock(::duckdb::data_ptr_t node_block_ptr,
                                   idx_t block_size_bytes);
 
   /**
@@ -42,14 +43,15 @@ public:
    * @param node_block_ptr Pointer to the start of the node block buffer.
    * @return The neighbor count (uint16_t).
    */
-  static uint16_t GetNeighborCount(const_data_ptr_t node_block_ptr);
+  static uint16_t GetNeighborCount(::duckdb::const_data_ptr_t node_block_ptr);
 
   /**
    * @brief Sets the number of neighbors for the node.
    * @param node_block_ptr Pointer to the start of the node block buffer.
    * @param count The new neighbor count.
    */
-  static void SetNeighborCount(data_ptr_t node_block_ptr, uint16_t count);
+  static void SetNeighborCount(::duckdb::data_ptr_t node_block_ptr,
+                               uint16_t count);
 
   /**
    * @brief Gets a constant pointer to the node's full vector data.
@@ -57,8 +59,9 @@ public:
    * @param layout The calculated layout offsets for the node block.
    * @return Constant pointer to the vector data.
    */
-  static const_data_ptr_t GetNodeVector(const_data_ptr_t node_block_ptr,
-                                        const NodeLayoutOffsets &layout);
+  static ::duckdb::const_data_ptr_t
+  GetNodeVector(::duckdb::const_data_ptr_t node_block_ptr,
+                const NodeLayoutOffsets &layout);
 
   /**
    * @brief Gets a mutable pointer to the node's full vector data.
@@ -66,8 +69,9 @@ public:
    * @param layout The calculated layout offsets for the node block.
    * @return Mutable pointer to the vector data.
    */
-  static data_ptr_t GetNodeVectorMutable(data_ptr_t node_block_ptr,
-                                         const NodeLayoutOffsets &layout);
+  static ::duckdb::data_ptr_t
+  GetNodeVectorMutable(::duckdb::data_ptr_t node_block_ptr,
+                       const NodeLayoutOffsets &layout);
 
   /**
    * @brief Gets a constant pointer to the array of neighbor RowIDs.
@@ -75,8 +79,9 @@ public:
    * @param layout The calculated layout offsets for the node block.
    * @return Constant pointer to the start of the RowID array.
    */
-  static const row_t *GetNeighborIDsPtr(const_data_ptr_t node_block_ptr,
-                                        const NodeLayoutOffsets &layout);
+  static ::duckdb::const_data_ptr_t
+  GetNeighborIDsPtr(::duckdb::const_data_ptr_t node_block_ptr,
+                    const NodeLayoutOffsets &layout);
 
   /**
    * @brief Gets a mutable pointer to the array of neighbor RowIDs.
@@ -84,8 +89,9 @@ public:
    * @param layout The calculated layout offsets for the node block.
    * @return Mutable pointer to the start of the RowID array.
    */
-  static row_t *GetNeighborIDsPtrMutable(data_ptr_t node_block_ptr,
-                                         const NodeLayoutOffsets &layout);
+  static ::duckdb::row_t *
+  GetNeighborIDsPtrMutable(::duckdb::data_ptr_t node_block_ptr,
+                           const NodeLayoutOffsets &layout);
 
   /**
    * @brief Gets a view of the compressed ternary planes for a specific
@@ -97,7 +103,7 @@ public:
    * @return A TernaryPlanesView pointing to the neighbor's planes.
    */
   static TernaryPlanesView
-  GetNeighborTernaryPlanes(const_data_ptr_t node_block_ptr,
+  GetNeighborTernaryPlanes(::duckdb::const_data_ptr_t node_block_ptr,
                            const NodeLayoutOffsets &layout,
                            uint16_t neighbor_idx, idx_t dimensions);
 
@@ -111,9 +117,10 @@ public:
    * @return A MutableTernaryPlanesView pointing to the neighbor's planes.
    */
   static MutableTernaryPlanesView
-  GetNeighborTernaryPlanesMutable(data_ptr_t node_block_ptr,
+  GetNeighborTernaryPlanesMutable(::duckdb::data_ptr_t node_block_ptr,
                                   const NodeLayoutOffsets &layout,
                                   uint16_t neighbor_idx, idx_t dimensions);
 };
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

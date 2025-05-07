@@ -1,6 +1,6 @@
 /**
- * @file NodeManager.hpp
- * @brief Defines the NodeManager class for managing node allocations,
+ * @file StorageManager.hpp
+ * @brief Defines the StorageManager class for managing node allocations,
  *        RowID mappings, and raw node data access.
  */
 #pragma once
@@ -16,19 +16,21 @@
 #include <memory> // For unique_ptr
 #include <random> // For GetRandomNodeID's distribution
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
-class NodeManager {
+class StorageManager {
 public:
   /**
-   * @brief Constructor for NodeManager.
+   * @brief Constructor for StorageManager.
    * @details Initializes the internal FixedSizeAllocator for managing node
    * blocks.
    * @param buffer_manager Reference to DuckDB's buffer manager.
    * @param block_size_bytes The size of each block to be managed by the
    * allocator.
    */
-  NodeManager(BufferManager &buffer_manager, idx_t block_size_bytes);
+  StorageManager(::duckdb::BufferManager &buffer_manager,
+                 idx_t block_size_bytes);
 
   /**
    * @brief Allocates a new block for a node and maps the row ID.
@@ -37,13 +39,13 @@ public:
    * @throws InternalException if the allocator fails to create a new block or
    * if not initialized.
    */
-  IndexPointer AllocateNode(row_t row_id);
+  ::duckdb::IndexPointer AllocateNode(::duckdb::row_t row_id);
 
   /**
    * @brief Removes a node's mapping and frees its block in the allocator.
    * @param row_id The row ID of the node to delete.
    */
-  void FreeNode(row_t row_id);
+  void FreeNode(::duckdb::row_t row_id);
 
   /**
    * @brief Tries to retrieve the IndexPointer for a given row ID from the
@@ -54,7 +56,8 @@ public:
    * @return True if the row ID was found and its pointer is valid, false
    * otherwise.
    */
-  bool TryGetNodePointer(row_t row_id, IndexPointer &node_ptr) const;
+  bool TryGetNodePointer(::duckdb::row_t row_id,
+                         ::duckdb::IndexPointer &node_ptr) const;
 
   /**
    * @brief Gets a mutable pointer to the data within a node's block.
@@ -63,7 +66,7 @@ public:
    * @throws IOException if node_ptr is invalid.
    * @throws InternalException if the allocator is not initialized.
    */
-  data_ptr_t GetNodeDataMutable(IndexPointer node_ptr);
+  ::duckdb::data_ptr_t GetNodeDataMutable(::duckdb::IndexPointer node_ptr);
 
   /**
    * @brief Gets a read-only pointer to the data within a node's block.
@@ -72,7 +75,7 @@ public:
    * @throws IOException if node_ptr is invalid.
    * @throws InternalException if the allocator is not initialized.
    */
-  const_data_ptr_t GetNodeData(IndexPointer node_ptr) const;
+  ::duckdb::const_data_ptr_t GetNodeData(::duckdb::IndexPointer node_ptr) const;
 
   /**
    * @brief Resets the allocator and clears the RowID map.
@@ -95,7 +98,7 @@ public:
    * @return Reference to the FixedSizeAllocator.
    * @throws InternalException if the allocator is not initialized.
    */
-  FixedSizeAllocator &GetAllocator();
+  ::duckdb::FixedSizeAllocator &GetAllocator();
 
   /**
    * @brief Gets the number of distinct nodes currently mapped.
@@ -111,7 +114,7 @@ public:
    * @return A random row ID from the map, or NumericLimits<row_t>::Maximum() if
    * the map is empty.
    */
-  row_t GetRandomNodeID(RandomEngine &engine);
+  ::duckdb::row_t GetRandomNodeID(::duckdb::RandomEngine &engine);
 
   // TODO: Add methods for persisting/loading the rowid_to_node_ptr_map_ if it
   // becomes an ART index and needs separate serialization from the main index
@@ -121,9 +124,10 @@ public:
 
 private:
   //! Manages disk blocks for index nodes.
-  unique_ptr<FixedSizeAllocator> allocator_;
+  std::unique_ptr<::duckdb::FixedSizeAllocator> allocator_;
   //! Maps DuckDB row_t to the IndexPointer of the node block.
-  std::map<row_t, IndexPointer> rowid_to_node_ptr_map_;
+  std::map<::duckdb::row_t, ::duckdb::IndexPointer> rowid_to_node_ptr_map_;
 };
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

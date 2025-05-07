@@ -19,7 +19,7 @@
 // Include headers for the refactored components
 #include "GraphOperations.hpp"    // New component
 #include "LmDiskannScanState.hpp" // For scan state definition
-#include "NodeManager.hpp"        // New component
+#include "StorageManager.hpp"     // New component
 #include "index_config.hpp"       // Include the new config header
 
 #include <map>    // Using std::map for in-memory RowID mapping for now
@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+namespace diskann {
 namespace duckdb {
 
 // Forward declarations for components used internally
@@ -49,16 +50,19 @@ struct LmDiskannDBState {
    * @param io_manager Reference to the TableIOManager.
    * @param type_ref The logical type of the indexed column.
    */
-  LmDiskannDBState(AttachedDatabase &db_ref, TableIOManager &io_manager,
-                   const LogicalType &type_ref)
+  LmDiskannDBState(::duckdb::AttachedDatabase &db_ref,
+                   ::duckdb::TableIOManager &io_manager,
+                   const ::duckdb::LogicalType &type_ref)
       : db(db_ref), table_io_manager(io_manager),
         indexed_column_type(type_ref) {}
 
-  AttachedDatabase &db;             // Reference to the database instance.
-  TableIOManager &table_io_manager; // Reference to DuckDB's IO manager.
-  LogicalType indexed_column_type;  // The full logical type of the indexed
-                                    // column (e.g., ARRAY(FLOAT, 128)).
-  IndexPointer
+  ::duckdb::AttachedDatabase &db; // Reference to the database instance.
+  ::duckdb::TableIOManager
+      &table_io_manager; // Reference to DuckDB's IO manager.
+  ::duckdb::LogicalType
+      indexed_column_type; // The full logical type of the indexed
+                           // column (e.g., ARRAY(FLOAT, 128)).
+  ::duckdb::IndexPointer
       metadata_ptr; // Pointer to the block holding persistent index metadata.
 };
 
@@ -68,7 +72,7 @@ struct LmDiskannDBState {
  * @details Interfaces with DuckDB's index system and delegates tasks to
  *          specialized modules (config, node, storage, search, distance).
  */
-class LmDiskannIndex : public BoundIndex {
+class LmDiskannIndex : public ::duckdb::BoundIndex {
 public:
   /**
    * @brief Type name used for registration and in CREATE INDEX ... USING
@@ -92,14 +96,17 @@ public:
    * @param storage_info Information about existing index storage (if loading).
    * @param estimated_cardinality Estimated number of rows in the table.
    */
-  LmDiskannIndex(const string &name, IndexConstraintType index_constraint_type,
-                 const vector<column_t> &column_ids,
-                 TableIOManager &table_io_manager,
-                 const vector<unique_ptr<Expression>> &unbound_expressions,
-                 AttachedDatabase &db,
-                 const case_insensitive_map_t<Value> &options,
-                 const IndexStorageInfo &storage_info,
-                 idx_t estimated_cardinality);
+  LmDiskannIndex(
+      const ::duckdb::string &name,
+      ::duckdb::IndexConstraintType index_constraint_type,
+      const ::duckdb::vector<::duckdb::column_t> &column_ids,
+      ::duckdb::TableIOManager &table_io_manager,
+      const ::duckdb::vector<::duckdb::unique_ptr<::duckdb::Expression>>
+          &unbound_expressions,
+      ::duckdb::AttachedDatabase &db,
+      const ::duckdb::case_insensitive_map_t<::duckdb::Value> &options,
+      const ::duckdb::IndexStorageInfo &storage_info,
+      idx_t estimated_cardinality);
 
   /**
    * @brief Destructor
@@ -108,33 +115,39 @@ public:
 
   // --- Overridden BoundIndex Virtual Methods --- //
   /** @brief Appends data to the index. Called during bulk loading. */
-  ErrorData Append(IndexLock &lock, DataChunk &entries,
-                   Vector &row_identifiers) override;
+  ::duckdb::ErrorData Append(::duckdb::IndexLock &lock,
+                             ::duckdb::DataChunk &entries,
+                             ::duckdb::Vector &row_identifiers) override;
   /** @brief Commits a drop operation, freeing allocated resources. */
-  void CommitDrop(IndexLock &index_lock) override;
+  void CommitDrop(::duckdb::IndexLock &index_lock) override;
   /** @brief Deletes entries from the index. */
-  void Delete(IndexLock &lock, DataChunk &entries,
-              Vector &row_identifiers) override;
+  void Delete(::duckdb::IndexLock &lock, ::duckdb::DataChunk &entries,
+              ::duckdb::Vector &row_identifiers) override;
   /** @brief Inserts data into the index. */
-  ErrorData Insert(IndexLock &lock, DataChunk &data, Vector &row_ids) override;
+  ::duckdb::ErrorData Insert(::duckdb::IndexLock &lock,
+                             ::duckdb::DataChunk &data,
+                             ::duckdb::Vector &row_ids) override;
   /** @brief Retrieves storage information (metadata pointer, allocator stats).
    */
-  IndexStorageInfo GetStorageInfo(const bool get_buffers);
+  ::duckdb::IndexStorageInfo GetStorageInfo(const bool get_buffers);
   /** @brief Gets the estimated in-memory size of the index structures. */
   idx_t GetInMemorySize();
   /** @brief Merges another index into this one (not implemented). */
-  bool MergeIndexes(IndexLock &state, BoundIndex &other_index) override;
+  bool MergeIndexes(::duckdb::IndexLock &state,
+                    ::duckdb::BoundIndex &other_index) override;
   /** @brief Performs vacuuming operations (e.g., processing delete queue). */
-  void Vacuum(IndexLock &state) override;
+  void Vacuum(::duckdb::IndexLock &state) override;
   /** @brief Verifies index integrity and returns a string representation
    * (verification TBD). */
-  string VerifyAndToString(IndexLock &state, const bool only_verify) override;
+  ::duckdb::string VerifyAndToString(::duckdb::IndexLock &state,
+                                     const bool only_verify) override;
   /** @brief Verifies allocator integrity (delegated). */
-  void VerifyAllocations(IndexLock &state) override;
+  void VerifyAllocations(::duckdb::IndexLock &state) override;
   /** @brief Generates a constraint violation message (not applicable). */
-  string GetConstraintViolationMessage(VerifyExistenceType verify_type,
-                                       idx_t failed_index,
-                                       DataChunk &input) override;
+  ::duckdb::string
+  GetConstraintViolationMessage(::duckdb::VerifyExistenceType verify_type,
+                                idx_t failed_index,
+                                ::duckdb::DataChunk &input) override;
 
   // --- LM-DiskANN Specific Methods for Scanning --- //
   /**
@@ -144,23 +157,28 @@ public:
    * @param k The number of nearest neighbors to find.
    * @return A unique pointer to the initialized scan state.
    */
-  unique_ptr<IndexScanState>
-  InitializeScan(ClientContext &context, const Vector &query_vector, idx_t k);
+  ::duckdb::unique_ptr<::duckdb::IndexScanState>
+  InitializeScan(::duckdb::ClientContext &context,
+                 const ::duckdb::Vector &query_vector, idx_t k);
   /**
    * @brief Performs one step of the index scan, filling the result vector.
    * @param state The current scan state.
    * @param result The output vector to store resulting RowIDs.
    * @return The number of results produced in this step.
    */
-  idx_t Scan(IndexScanState &state, Vector &result);
+  idx_t Scan(::duckdb::IndexScanState &state, ::duckdb::Vector &result);
 
   // --- Public Accessors (Potentially needed by other modules/friends) --- //
   /** @brief Get the attached database reference. */
-  AttachedDatabase &GetAttachedDatabase() const { return db_state_.db; }
+  ::duckdb::AttachedDatabase &GetAttachedDatabase() const {
+    return db_state_.db;
+  }
   /** @brief Get the fixed size allocator reference. */
-  FixedSizeAllocator &GetAllocator() { return node_manager_->GetAllocator(); }
+  ::duckdb::FixedSizeAllocator &GetAllocator() {
+    return node_manager_->GetAllocator();
+  }
   /** @brief Get the calculated node layout offsets. */
-  const NodeLayoutOffsets &GetNodeLayout() const { return node_layout_; }
+  const core::NodeLayoutOffsets &GetNodeLayout() const { return node_layout_; }
   /** @brief Get the vector dimensions. */
   idx_t GetDimensions() const { return config_.dimensions; }
   /** @brief Get the size of the compressed ternary edge representation. */
@@ -168,7 +186,9 @@ public:
     return node_layout_.ternary_edge_size_bytes;
   }
   /** @brief Get the distance metric type. */
-  LmDiskannMetricType GetMetricType() const { return config_.metric_type; }
+  core::LmDiskannMetricType GetMetricType() const {
+    return config_.metric_type;
+  }
   /** @brief Get the max neighbor degree (R). */
   uint32_t GetR() const { return config_.r; }
   /** @brief Get the alpha parameter for pruning. */
@@ -176,20 +196,23 @@ public:
   /** @brief Get the search list size. */
   uint32_t GetLSearch() const { return config_.l_search; }
   /** @brief Get the node vector type. */
-  LmDiskannVectorType GetNodeVectorType() const {
+  core::LmDiskannVectorType GetNodeVectorType() const {
     return config_.node_vector_type;
   }
 
   // --- New Public Methods for GraphOperations --- //
   /** @brief Public wrapper for calculating approximate distance. */
-  float PublicCalculateApproxDistance(const float *query_ptr,
-                                      const_data_ptr_t compressed_neighbor_ptr);
+  float PublicCalculateApproxDistance(
+      const float *query_ptr,
+      ::duckdb::const_data_ptr_t compressed_neighbor_ptr);
   /** @brief Public wrapper for compressing a vector for edge storage. */
-  void PublicCompressVectorForEdge(const float *input_vector,
-                                   data_ptr_t output_compressed_vector);
+  void
+  PublicCompressVectorForEdge(const float *input_vector,
+                              ::duckdb::data_ptr_t output_compressed_vector);
   /** @brief Public wrapper for converting a raw node vector to float. */
-  void PublicConvertNodeVectorToFloat(const_data_ptr_t raw_node_vector,
-                                      float *float_vector_out);
+  void
+  PublicConvertNodeVectorToFloat(::duckdb::const_data_ptr_t raw_node_vector,
+                                 float *float_vector_out);
   /** @brief Public method to mark the index as dirty. */
   void PublicMarkDirty(bool dirty_state = true);
 
@@ -202,16 +225,16 @@ private:
    * @param config The index configuration.
    * @param find_exact_distances Flag for final re-ranking.
    */
-  friend void PerformSearch(LmDiskannScanState &scan_state,
+  friend void PerformSearch(::duckdb::LmDiskannScanState &scan_state,
                             LmDiskannIndex &index,
-                            const LmDiskannConfig &config,
+                            const core::LmDiskannConfig &config,
                             bool find_exact_distances);
 
   // --- Core Parameters (Held in Config Struct) --- //
   /** @brief Parsed and validated configuration parameters. */
-  LmDiskannConfig config_;
+  core::LmDiskannConfig config_;
   /** @brief Calculated layout based on config. */
-  NodeLayoutOffsets node_layout_;
+  core::NodeLayoutOffsets node_layout_;
   /** @brief Final aligned size of each node's block on disk. */
   idx_t block_size_bytes_;
 
@@ -221,20 +244,20 @@ private:
 
   /** @brief Path to the index-specific data directory (e.g.,
    * [db_name].lmd_idx/[index_name]/) */
-  string index_data_path_;
+  ::duckdb::string index_data_path_;
 
   /** @brief Internal format version (for metadata check). */
   uint8_t format_version_;
 
   // --- NEW COMPONENT INSTANCES --- //
   /** @brief Manages node allocation, RowID mapping, and raw data access. */
-  unique_ptr<NodeManager> node_manager_;
+  ::duckdb::unique_ptr<::duckdb::StorageManager> node_manager_;
   /** @brief Manages graph algorithms, structure, and entry point. */
-  unique_ptr<GraphOperations> graph_operations_;
+  ::duckdb::unique_ptr<core::GraphOperations> graph_operations_;
 
   // --- Delete Queue --- //
   /** @brief Pointer to the head of the delete queue linked list. */
-  IndexPointer delete_queue_head_ptr_;
+  ::duckdb::IndexPointer delete_queue_head_ptr_;
 
   /** @brief Tracks if changes need persisting. */
   bool is_dirty_ = false;
@@ -243,25 +266,27 @@ private:
   /** @brief Initializes structures for a new, empty index. */
   void InitializeNewIndex(idx_t estimated_cardinality);
   /** @brief Loads index metadata and state from existing storage info. */
-  void LoadFromStorage(const IndexStorageInfo &storage_info);
+  void LoadFromStorage(const ::duckdb::IndexStorageInfo &storage_info);
 
   // --- Original Private Distance/Conversion Helpers (to be wrapped or moved)
   // --- //
   /** @brief Calculates approximate distance using ternary compressed vector.
    * Uses config_. */
-  float CalculateApproxDistance(const float *query_ptr,
-                                const_data_ptr_t compressed_neighbor_ptr);
+  float
+  CalculateApproxDistance(const float *query_ptr,
+                          ::duckdb::const_data_ptr_t compressed_neighbor_ptr);
   /** @brief Compresses a float vector for edge storage (Ternary). Uses config_.
    */
   void CompressVectorForEdge(const float *input_vector,
-                             data_ptr_t output_compressed_vector);
+                             ::duckdb::data_ptr_t output_compressed_vector);
   /** @brief Calculates exact distance between two raw vectors. Uses config_. */
   template <typename T_QUERY, typename T_NODE> // T_QUERY is likely float
   float CalculateExactDistance(const T_QUERY *query_ptr,
-                               const_data_ptr_t node_vector_ptr);
+                               ::duckdb::const_data_ptr_t node_vector_ptr);
   /** @brief Converts raw node vector to float. Uses config_. */
-  void ConvertNodeVectorToFloat(const_data_ptr_t raw_node_vector,
+  void ConvertNodeVectorToFloat(::duckdb::const_data_ptr_t raw_node_vector,
                                 float *float_vector_out);
 };
 
 } // namespace duckdb
+} // namespace diskann
