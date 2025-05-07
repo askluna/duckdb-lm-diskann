@@ -13,7 +13,7 @@
 #include "index_config.hpp" // Include for enums AND LmDiskannMetadata struct
 
 namespace diskann {
-
+namespace core {
 // Forward declarations needed
 class FixedSizeAllocator;
 class AttachedDatabase;
@@ -69,9 +69,10 @@ struct NodeLayoutOffsets;
  * @return BufferHandle for the pinned block.
  * @throws IOException if the pointer is invalid or pinning fails.
  */
-BufferHandle GetNodeBuffer(IndexPointer node_ptr, AttachedDatabase &db,
-                           FixedSizeAllocator &allocator,
-                           bool write_lock = false);
+::duckdb::BufferHandle GetNodeBuffer(::duckdb::IndexPointer node_ptr,
+                                     ::duckdb::AttachedDatabase &db,
+                                     FixedSizeAllocator &allocator,
+                                     bool write_lock = false);
 
 // --- Metadata Persistence --- //
 
@@ -82,7 +83,8 @@ BufferHandle GetNodeBuffer(IndexPointer node_ptr, AttachedDatabase &db,
  * @param allocator The FixedSizeAllocator used by the index.
  * @param metadata The metadata struct to persist.
  */
-void PersistMetadata(IndexPointer metadata_ptr, AttachedDatabase &db,
+void PersistMetadata(::duckdb::IndexPointer metadata_ptr,
+                     ::duckdb::AttachedDatabase &db,
                      FixedSizeAllocator &allocator,
                      const LmDiskannMetadata &metadata);
 
@@ -93,8 +95,9 @@ void PersistMetadata(IndexPointer metadata_ptr, AttachedDatabase &db,
  * @param allocator The FixedSizeAllocator used by the index.
  * @param[out] metadata The metadata struct to load into.
  */
-void LoadMetadata(IndexPointer metadata_ptr, AttachedDatabase &db,
-                  FixedSizeAllocator &allocator, LmDiskannMetadata &metadata);
+void LoadMetadata(::duckdb::IndexPointer metadata_ptr,
+                  ::duckdb::AttachedDatabase &db, FixedSizeAllocator &allocator,
+                  LmDiskannMetadata &metadata);
 
 // --- Delete Queue Management --- //
 
@@ -109,8 +112,10 @@ void LoadMetadata(IndexPointer metadata_ptr, AttachedDatabase &db,
  * @param allocator The FixedSizeAllocator (or potentially a dedicated one for
  * the queue).
  */
-void EnqueueDeletion(row_t deleted_row_id, IndexPointer &delete_queue_head_ptr,
-                     AttachedDatabase &db, FixedSizeAllocator &allocator);
+void EnqueueDeletion(::duckdb::row_t deleted_row_id,
+                     ::duckdb::IndexPointer &delete_queue_head_ptr,
+                     ::duckdb::AttachedDatabase &db,
+                     FixedSizeAllocator &allocator);
 
 /**
  * @brief Processes the deletion queue (placeholder implementation).
@@ -142,8 +147,9 @@ void EnqueueDeletion(row_t deleted_row_id, IndexPointer &delete_queue_head_ptr,
  * @return The RowID found in the node block (or potentially MAX_ROW_ID).
  * @throws IOException if the block cannot be read.
  */
-row_t GetEntryPointRowId(IndexPointer node_ptr, AttachedDatabase &db,
-                         FixedSizeAllocator &allocator);
+::duckdb::row_t GetEntryPointRowId(::duckdb::IndexPointer node_ptr,
+                                   ::duckdb::AttachedDatabase &db,
+                                   FixedSizeAllocator &allocator);
 
 /**
  * @brief Gets a random node ID from the index.
@@ -157,4 +163,5 @@ row_t GetEntryPointRowId(IndexPointer node_ptr, AttachedDatabase &db,
 // row_t GetRandomNodeID(AttachedDatabase &db, FixedSizeAllocator &allocator /*,
 // ART* rowid_map */);
 
+} // namespace core
 } // namespace diskann

@@ -251,7 +251,7 @@ private:
 
   // --- NEW COMPONENT INSTANCES --- //
   /** @brief Manages node allocation, RowID mapping, and raw data access. */
-  ::duckdb::unique_ptr<::duckdb::GraphManager> node_manager_;
+  ::duckdb::unique_ptr<core::GraphManager> node_manager_;
   /** @brief Manages graph algorithms, structure, and entry point. */
   ::duckdb::unique_ptr<core::GraphOperations> graph_operations_;
 

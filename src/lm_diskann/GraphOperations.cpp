@@ -7,7 +7,6 @@
 #include "GraphManager.hpp"       // For node access
 #include "LmDiskannIndex.hpp"     // For LmDiskannIndex context (PerformSearch)
 #include "LmDiskannScanState.hpp" // For creating scan states for internal searches
-#include "NodeAccessors.hpp"      // For direct block manipulation
 #include "distance.hpp" // For ComputeExactDistanceFloat and other distance utils
 
 #include "duckdb/common/limits.hpp"
@@ -83,7 +82,8 @@ void GraphOperations::RobustPrune(
     uint16_t current_neighbor_count =
         NodeAccessors::GetNeighborCount(node_data);
     const ::duckdb::row_t *current_neighbor_ids =
-        NodeAccessors::GetNeighborIDsPtr(node_data, node_layout_);
+        reinterpret_cast<const ::duckdb::row_t *>(
+            NodeAccessors::GetNeighborIDsPtr(node_data, node_layout_));
 
     for (uint16_t i = 0; i < current_neighbor_count; ++i) {
       ::duckdb::row_t existing_id = current_neighbor_ids[i];
@@ -259,7 +259,8 @@ void GraphOperations::InsertNode(::duckdb::row_t new_node_rowid,
   uint16_t final_new_neighbor_count =
       NodeAccessors::GetNeighborCount(new_node_data_ro);
   const ::duckdb::row_t *final_new_neighbor_ids =
-      NodeAccessors::GetNeighborIDsPtr(new_node_data_ro, node_layout_);
+      reinterpret_cast<const ::duckdb::row_t *>(
+          NodeAccessors::GetNeighborIDsPtr(new_node_data_ro, node_layout_));
 
   ::duckdb::vector<float> neighbor_node_vector_float_storage(
       config_.dimensions);
@@ -297,10 +298,11 @@ void GraphOperations::InsertNode(::duckdb::row_t new_node_rowid,
   index_context_.PublicMarkDirty();
 }
 
-void GraphOperations::HandleNodeDeletion(row_t deleted_node_rowid) {
+void GraphOperations::HandleNodeDeletion(::duckdb::row_t deleted_node_rowid) {
   if (deleted_node_rowid == graph_entry_point_rowid_) {
     graph_entry_point_ptr_.Clear();
-    graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum();
+    graph_entry_point_rowid_ =
+        ::duckdb::NumericLimits<::duckdb::row_t>::Maximum();
     // Attempt to find a new entry point immediately if possible, or let
     // SelectEntryPointForSearch handle it lazily. For now, just clear.
     // SelectEntryPointForSearch will fix it on next search.
@@ -311,26 +313,30 @@ void GraphOperations::HandleNodeDeletion(row_t deleted_node_rowid) {
   // rebuilds or more advanced maintenance in DiskANN variants.
 }
 
-row_t GraphOperations::SelectEntryPointForSearch(RandomEngine &engine) {
-  if (graph_entry_point_rowid_ != NumericLimits<row_t>::Maximum()) {
-    IndexPointer ptr_check;
+::duckdb::row_t
+GraphOperations::SelectEntryPointForSearch(::duckdb::RandomEngine &engine) {
+  if (graph_entry_point_rowid_ !=
+      ::duckdb::NumericLimits<::duckdb::row_t>::Maximum()) {
+    ::duckdb::IndexPointer ptr_check;
     // Verify current entry point is still valid in the node manager
     if (node_manager_.TryGetNodePointer(graph_entry_point_rowid_, ptr_check)) {
       return graph_entry_point_rowid_;
     }
     // Entry point was deleted or became invalid
     graph_entry_point_ptr_.Clear();
-    graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum();
+    graph_entry_point_rowid_ =
+        ::duckdb::NumericLimits<::duckdb::row_t>::Maximum();
     index_context_.PublicMarkDirty();
   }
 
   if (node_manager_.GetNodeCount() == 0) {
-    return NumericLimits<row_t>::Maximum(); // No nodes, no entry point
+    return ::duckdb::NumericLimits<::duckdb::row_t>::Maximum(); // No nodes, no
+                                                                // entry point
   }
 
-  row_t random_id = node_manager_.GetRandomNodeID(engine);
-  if (random_id != NumericLimits<row_t>::Maximum()) {
-    IndexPointer random_ptr;
+  ::duckdb::row_t random_id = node_manager_.GetRandomNodeID(engine);
+  if (random_id != ::duckdb::NumericLimits<::duckdb::row_t>::Maximum()) {
+    ::duckdb::IndexPointer random_ptr;
     if (node_manager_.TryGetNodePointer(random_id, random_ptr)) {
       graph_entry_point_rowid_ = random_id;
       graph_entry_point_ptr_ = random_ptr;
@@ -343,14 +349,14 @@ row_t GraphOperations::SelectEntryPointForSearch(RandomEngine &engine) {
   // This part is a safety net, ideally GetRandomNodeID + TryGetNodePointer is
   // robust. For now, if random selection fails, we indicate no entry point
   // found.
-  return NumericLimits<row_t>::Maximum();
+  return ::duckdb::NumericLimits<::duckdb::row_t>::Maximum();
 }
 
 /**
  * @brief Gets the current graph entry point pointer.
  * @return IndexPointer to the entry point node.
  */
-IndexPointer GraphOperations::GetGraphEntryPointPointer() const {
+::duckdb::IndexPointer GraphOperations::GetGraphEntryPointPointer() const {
   return graph_entry_point_ptr_;
 }
 
@@ -358,11 +364,12 @@ IndexPointer GraphOperations::GetGraphEntryPointPointer() const {
  * @brief Gets the row_id of the current graph entry point.
  * @return row_t of the entry point node.
  */
-row_t GraphOperations::GetGraphEntryPointRowId() const {
+::duckdb::row_t GraphOperations::GetGraphEntryPointRowId() const {
   return graph_entry_point_rowid_;
 }
 
-void GraphOperations::SetLoadedEntryPoint(IndexPointer ptr, row_t row_id) {
+void GraphOperations::SetLoadedEntryPoint(::duckdb::IndexPointer ptr,
+                                          ::duckdb::row_t row_id) {
   graph_entry_point_ptr_ = ptr;
   graph_entry_point_rowid_ = row_id;
   // This is setting state from a persisted file, so the index is not 'dirty'

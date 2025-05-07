@@ -11,7 +11,8 @@
 #include <utility>          // For std::pair
 #include <vector>           // For std::vector
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
 class LmDiskannIndex;      // Forward declare to access members/types
 struct LmDiskannScanState; // Forward declare scan state struct
@@ -62,4 +63,5 @@ void TopKTernarySearch(
     std::vector<std::pair<float, uint64_t>>
         &out); // Output: pairs of <similarity_score, ID>
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

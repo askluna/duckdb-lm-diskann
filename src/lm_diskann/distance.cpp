@@ -18,7 +18,8 @@
 #include <stdexcept> // For runtime_error in Approx Similarity
 #include <vector>    // For temporary query plane buffers in Approx Similarity
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
 // --- Core Function Implementations --- //
 
@@ -74,8 +75,9 @@ float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
     return 1.0f - cosine_similarity;
   }
   default: {
-    throw Exception(ExceptionType::INVALID_INPUT,
-                    "ComputeExactDistanceFloat: Unsupported metric type");
+    throw ::duckdb::Exception(
+        ::duckdb::ExceptionType::INVALID_INPUT,
+        "ComputeExactDistanceFloat: Unsupported metric type");
   }
   }
 }
@@ -123,4 +125,5 @@ float ComputeApproxSimilarityTernary(
   return static_cast<float>(raw_score);
 }
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

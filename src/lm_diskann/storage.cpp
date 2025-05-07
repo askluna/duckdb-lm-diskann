@@ -1,6 +1,5 @@
 
 #include "storage.hpp"
-#include "NodeAccessors.hpp" // For accessors if needed by queue processing
 
 #include "duckdb/common/limits.hpp" // For NumericLimits
 #include "duckdb/common/printer.hpp"
@@ -17,7 +16,8 @@
 
 #include <random> // For random node selection placeholder
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
 // --- Storage Management Implementation ---
 // NOTE: These functions currently act as placeholders or interfaces.
@@ -27,65 +27,72 @@ namespace duckdb {
 // taking the ART map reference as a parameter.
 
 // Tries to find the IndexPointer for a given row_id using the map
-bool TryGetNodePointer(row_t row_id, IndexPointer &node_ptr,
+bool TryGetNodePointer(::duckdb::row_t row_id, ::duckdb::IndexPointer &node_ptr,
                        AttachedDatabase &db /*, ART* rowid_map */) {
   // FIXME: Implement RowID map lookup (e.g., using ART)
   // This function would encapsulate the ART lookup logic.
-  throw NotImplementedException(
+  throw ::duckdb::NotImplementedException(
       "Persistent TryGetNodePointer is not implemented.");
   return false;
 }
 
 // Allocates a new block for a node and updates the RowID map
-IndexPointer AllocateNode(row_t row_id, AttachedDatabase &db,
-                          FixedSizeAllocator &allocator /*, ART* rowid_map */) {
+::duckdb::IndexPointer
+AllocateNode(::duckdb::row_t row_id, ::duckdb::AttachedDatabase &db,
+             ::duckdb::FixedSizeAllocator &allocator /*, ART* rowid_map */) {
   // FIXME: Implement RowID map insertion
   // This function would encapsulate the allocator->New() call AND the ART
   // insert logic.
-  throw NotImplementedException("Persistent AllocateNode is not implemented.");
-  return IndexPointer();
+  throw ::duckdb::NotImplementedException(
+      "Persistent AllocateNode is not implemented.");
+  return ::duckdb::IndexPointer();
 }
 
 // Deletes a node from the RowID map and potentially frees the block
 void DeleteNodeFromMapAndFreeBlock(
-    row_t row_id, AttachedDatabase &db,
-    FixedSizeAllocator &allocator /*, ART* rowid_map */) {
+    ::duckdb::row_t row_id, ::duckdb::AttachedDatabase &db,
+    ::duckdb::FixedSizeAllocator &allocator /*, ART* rowid_map */) {
   // FIXME: Implement RowID map deletion
   // This function would encapsulate the ART delete logic AND the
   // allocator->Free() call.
-  throw NotImplementedException(
+  throw ::duckdb::NotImplementedException(
       "Persistent DeleteNodeFromMapAndFreeBlock is not implemented.");
 }
 
 // Pins block using IndexPointer.
-BufferHandle GetNodeBuffer(IndexPointer node_ptr, AttachedDatabase &db,
-                           FixedSizeAllocator &allocator, bool write_lock) {
+::duckdb::BufferHandle GetNodeBuffer(::duckdb::IndexPointer node_ptr,
+                                     ::duckdb::AttachedDatabase &db,
+                                     ::duckdb::FixedSizeAllocator &allocator,
+                                     bool write_lock) {
   if (!node_ptr.IsValid()) {
-    throw IOException("Invalid node pointer provided to GetNodeBuffer.");
+    throw ::duckdb::IOException(
+        "Invalid node pointer provided to GetNodeBuffer.");
   }
-  auto &buffer_manager = BufferManager::GetBufferManager(db);
+  auto &buffer_manager = ::duckdb::BufferManager::GetBufferManager(db);
   // This function correctly uses the passed allocator reference.
   return buffer_manager.Pin(allocator.GetBlock(node_ptr));
 }
 
 // Writes index parameters and state pointers to the metadata block.
 void PersistMetadata(
-    IndexPointer metadata_ptr, AttachedDatabase &db,
-    FixedSizeAllocator &allocator, uint8_t format_version,
+    ::duckdb::IndexPointer metadata_ptr, ::duckdb::AttachedDatabase &db,
+    ::duckdb::FixedSizeAllocator &allocator, uint8_t format_version,
     LmDiskannMetricType metric_type, LmDiskannVectorType node_vector_type,
-    LmDiskannEdgeType edge_vector_type_param, idx_t dimensions, uint32_t r,
-    uint32_t l_insert, float alpha, uint32_t l_search, idx_t block_size_bytes,
-    IndexPointer graph_entry_point_ptr,
-    IndexPointer delete_queue_head_ptr /*, IndexPointer rowid_map_root_ptr */) {
+    idx_t dimensions, uint32_t r, uint32_t l_insert, float alpha,
+    uint32_t l_search, idx_t block_size_bytes,
+    ::duckdb::IndexPointer graph_entry_point_ptr,
+    ::duckdb::IndexPointer
+        delete_queue_head_ptr /*, IndexPointer rowid_map_root_ptr */) {
 
   if (!metadata_ptr.IsValid()) {
-    throw InternalException(
+    throw ::duckdb::InternalException(
         "Cannot persist LM_DISKANN metadata: metadata pointer is invalid.");
   }
-  auto &buffer_manager = BufferManager::GetBufferManager(db);
+  auto &buffer_manager = ::duckdb::BufferManager::GetBufferManager(db);
   auto handle =
       buffer_manager.Pin(allocator.GetMetaBlock(metadata_ptr.GetBlockId()));
-  MetadataWriter writer(handle.GetFileBuffer(), metadata_ptr.GetOffset());
+  ::duckdb::MetadataWriter writer(handle.GetFileBuffer(),
+                                  metadata_ptr.GetOffset());
 
   // --- Serialize Parameters ---
   writer.Write<uint8_t>(format_version);
@@ -98,8 +105,8 @@ void PersistMetadata(
   writer.Write<uint32_t>(l_search);
   writer.Write<idx_t>(block_size_bytes);
   // Serialize graph_entry_point_ptr_ and delete_queue_head_ptr_
-  writer.Write<IndexPointer>(graph_entry_point_ptr);
-  writer.Write<IndexPointer>(delete_queue_head_ptr);
+  writer.Write<::duckdb::IndexPointer>(graph_entry_point_ptr);
+  writer.Write<::duckdb::IndexPointer>(delete_queue_head_ptr);
   // Serialize rowid_map_root_ptr_ (Get the root pointer from the ART index)
   // writer.Write<IndexPointer>(rowid_map_root_ptr);
 
@@ -108,23 +115,24 @@ void PersistMetadata(
 
 // Reads index parameters and state pointers from the metadata block.
 void LoadMetadata(
-    IndexPointer metadata_ptr, AttachedDatabase &db,
-    FixedSizeAllocator &allocator, uint8_t &format_version,
+    ::duckdb::IndexPointer metadata_ptr, ::duckdb::AttachedDatabase &db,
+    ::duckdb::FixedSizeAllocator &allocator, uint8_t &format_version,
     LmDiskannMetricType &metric_type, LmDiskannVectorType &node_vector_type,
-    LmDiskannEdgeType &edge_vector_type_param, idx_t &dimensions, uint32_t &r,
-    uint32_t &l_insert, float &alpha, uint32_t &l_search,
-    idx_t &block_size_bytes, IndexPointer &graph_entry_point_ptr,
-    IndexPointer
+    idx_t &dimensions, uint32_t &r, uint32_t &l_insert, float &alpha,
+    uint32_t &l_search, idx_t &block_size_bytes,
+    ::duckdb::IndexPointer &graph_entry_point_ptr,
+    ::duckdb::IndexPointer
         &delete_queue_head_ptr /*, IndexPointer &rowid_map_root_ptr */) {
 
   if (!metadata_ptr.IsValid()) {
-    throw IOException(
+    throw ::duckdb::IOException(
         "Cannot load LM_DISKANN index: metadata pointer is invalid.");
   }
-  auto &buffer_manager = BufferManager::GetBufferManager(db);
+  auto &buffer_manager = ::duckdb::BufferManager::GetBufferManager(db);
   auto handle =
       buffer_manager.Pin(allocator.GetMetaBlock(metadata_ptr.GetBlockId()));
-  MetadataReader reader(handle.GetFileBuffer(), metadata_ptr.GetOffset());
+  ::duckdb::MetadataReader reader(handle.GetFileBuffer(),
+                                  metadata_ptr.GetOffset());
 
   // --- Deserialize Parameters ---
   reader.Read<uint8_t>(format_version);
@@ -135,10 +143,10 @@ void LoadMetadata(
   reader.Read<uint32_t>(r);
   reader.Read<uint32_t>(l_insert);
   reader.Read<float>(alpha);
-  reader.Read<uint32_t>(l_search);
+  reader.Read<::uint32_t>(l_search);
   reader.Read<idx_t>(block_size_bytes);
-  reader.Read<IndexPointer>(graph_entry_point_ptr);
-  reader.Read<IndexPointer>(delete_queue_head_ptr);
+  reader.Read<::duckdb::IndexPointer>(graph_entry_point_ptr);
+  reader.Read<::duckdb::IndexPointer>(delete_queue_head_ptr);
   // reader.Read<IndexPointer>(rowid_map_root_ptr);
 }
 
@@ -225,7 +233,8 @@ row_t GetRandomNodeID(AttachedDatabase &db,
   // Placeholder: Return invalid rowid
   // Printer::Warning("GetRandomNodeID not implemented, returning invalid
   // rowid.");
-  return NumericLimits<row_t>::Maximum();
+  return ::duckdb::NumericLimits<::duckdb::row_t>::Maximum();
 }
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

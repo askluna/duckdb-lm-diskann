@@ -1,7 +1,6 @@
 #include "search.hpp"
 #include "LmDiskannIndex.hpp"     // Include main index header
 #include "LmDiskannScanState.hpp" // For LmDiskannScanState
-#include "NodeAccessors.hpp"      // For node accessors
 #include "distance.hpp" // For ComputeExactDistanceFloat, ComputeApproxSimilarityTernary
 #include "index_config.hpp" // For config structs (needed potentially by index members)
 #include "ternary_quantization.hpp" // For EncodeTernary, GetKernel, WordsPerPlane (needed by TopKTernarySearch)
@@ -17,7 +16,8 @@
 #include <utility> // For std::pair
 #include <vector>
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
 // Define CandidateNode using the negated similarity score as distance
 using CandidateNode =
@@ -36,7 +36,7 @@ inline idx_t GetPlaneSizeBytes(const LmDiskannIndex &index) {
   // Use public getter instead of accessing private member
   idx_t dimensions = index.GetDimensions(); // Assuming this getter exists
   if (dimensions == 0) {
-    throw InternalException(
+    throw ::duckdb::InternalException(
         "Index dimensions are 0, cannot calculate plane size");
   }
   return GetTernaryPlaneSizeBytes(dimensions);
@@ -47,14 +47,15 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
   // Max-heap for candidates (stores {distance, node_id}) - we want smallest
   // distance = highest priority So we store {-distance, node_id} or use
   // std::greater
-  using candidate_pair_t = std::pair<float, row_t>;
+  using candidate_pair_t = std::pair<float, ::duckdb::row_t>;
   std::priority_queue<candidate_pair_t> candidate_pqueue; // Max-heap
 
   // 1. Initialize with Entry Point(s)
   // Access private helpers via friend status or make them public/internal
   // helpers? Assuming friend access is okay for now.
-  row_t entry_point_rowid = index.GetEntryPoint();
-  if (entry_point_rowid == NumericLimits<row_t>::Maximum()) {
+  ::duckdb::row_t entry_point_rowid = index.GetEntryPoint();
+  if (entry_point_rowid ==
+      ::duckdb::NumericLimits<::duckdb::row_t>::Maximum()) {
     // No entry point, index is empty or deleted entry not replaced
     // Ensure scan_state.candidates is empty (it should be initially)
     // std::priority_queue<candidate_pair_t>().swap(scan_state.candidates); //
@@ -62,10 +63,10 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
     return; // No search possible
   }
 
-  IndexPointer entry_point_ptr;
+  ::duckdb::IndexPointer entry_point_ptr;
   if (!index.TryGetNodePointer(entry_point_rowid, entry_point_ptr)) {
     // Entry point exists but node pointer not found (map inconsistency?)
-    Printer::Print(StringUtil::Format(
+    ::duckdb::Printer::Print(::duckdb::StringUtil::Format(
         "Warning: Entry point rowid %lld not found in map during search.",
         entry_point_rowid));
     // Ensure scan_state.candidates is empty
@@ -74,12 +75,12 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
   }
 
   // Calculate exact distance to entry point
-  vector<float> entry_node_float_vec(config.dimensions);
-  vector<float> query_float_vec(config.dimensions);
+  ::duckdb::vector<float> entry_node_float_vec(config.dimensions);
+  ::duckdb::vector<float> query_float_vec(config.dimensions);
   try {
     auto entry_node_handle = index.GetNodeBuffer(entry_point_ptr);
     auto entry_node_block = entry_node_handle.Ptr();
-    const_data_ptr_t entry_node_raw_vec =
+    ::duckdb::const_data_ptr_t entry_node_raw_vec =
         NodeAccessors::GetNodeVector(entry_node_block, index.GetNodeLayout());
 
     // Assuming query_vector_ptr points to float data
@@ -98,9 +99,9 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
     scan_state.visited.insert(entry_point_rowid);
 
   } catch (const std::exception &e) {
-    Printer::Print(
-        StringUtil::Format("Warning: Failed to process entry point %lld: %s",
-                           entry_point_rowid, e.what()));
+    ::duckdb::Printer::Print(::duckdb::StringUtil::Format(
+        "Warning: Failed to process entry point %lld: %s", entry_point_rowid,
+        e.what()));
     // Ensure scan_state.candidates is empty
     // std::priority_queue<candidate_pair_t>().swap(scan_state.candidates);
     return;
@@ -137,9 +138,9 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
       // limit first.
     }
 
-    row_t current_rowid = best_candidate.second;
+    ::duckdb::row_t current_rowid = best_candidate.second;
 
-    IndexPointer current_node_ptr;
+    ::duckdb::IndexPointer current_node_ptr;
     try {
       if (!index.TryGetNodePointer(current_rowid, current_node_ptr))
         continue; // Node deleted?
@@ -149,13 +150,13 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
 
       uint16_t neighbor_count =
           NodeAccessors::GetNeighborCount(current_node_block);
-      const row_t *neighbor_ids_ptr =
+      const ::duckdb::row_t *neighbor_ids_ptr =
           NodeAccessors::GetNeighborIDsPtr(current_node_block, layout);
       if (!neighbor_ids_ptr)
         continue;
 
       for (uint16_t i = 0; i < neighbor_count; ++i) {
-        row_t neighbor_rowid = neighbor_ids_ptr[i];
+        ::duckdb::row_t neighbor_rowid = neighbor_ids_ptr[i];
 
         if (scan_state.visited.count(neighbor_rowid)) {
           continue;
@@ -167,7 +168,7 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
                                                     i, config.dimensions);
 
         if (!neighbor_planes.IsValid()) {
-          Printer::Print(StringUtil::Format(
+          ::duckdb::Printer::Print(::duckdb::StringUtil::Format(
               "Warning: Invalid ternary planes for neighbor %lld of node %lld",
               neighbor_rowid, current_rowid));
           continue;
@@ -377,4 +378,5 @@ inline void TopKTernarySearch(
   }
 }
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

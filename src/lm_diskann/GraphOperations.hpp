@@ -7,6 +7,7 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/limits.hpp" // For NumericLimits
+#include "duckdb/common/random_engine.hpp"
 #include "duckdb/execution/index/index_pointer.hpp"
 #include "index_config.hpp" // For LmDiskannConfig and NodeLayoutOffsets
 
@@ -20,7 +21,6 @@ namespace core {
 class GraphManager;   // Updated from LmDiskannGraphManager
 class LmDiskannIndex; // For calling PerformSearch or other index context
 class LmDiskannScanState;
-class RandomEngine;
 
 class GraphOperations {
 public:
@@ -62,7 +62,7 @@ public:
    * @param engine A random engine to use for selecting a random node if needed.
    * @return A valid row_t to be used as a search entry point.
    */
-  ::duckdb::row_t SelectEntryPointForSearch(RandomEngine &engine);
+  ::duckdb::row_t SelectEntryPointForSearch(::duckdb::RandomEngine &engine);
 
   /**
    * @brief Gets the current graph entry point pointer.
