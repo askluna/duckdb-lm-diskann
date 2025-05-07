@@ -343,5 +343,3 @@ row_t GraphOperations::SelectEntryPointForSearch(RandomEngine &engine) {
 }
 
 } // namespace duckdb
-
-</rewritten_file>
