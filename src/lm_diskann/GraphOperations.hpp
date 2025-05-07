@@ -7,6 +7,7 @@
 
 #include "config.hpp" // For LmDiskannConfig and NodeLayoutOffsets
 #include "duckdb.hpp"
+#include "duckdb/common/limits.hpp" // For NumericLimits
 #include "duckdb/execution/index/index_pointer.hpp"
 
 #include <utility> // For std::pair
@@ -28,18 +29,11 @@ public:
    * @param node_layout The calculated layout of nodes on disk.
    * @param node_manager Reference to the node manager for data access.
    * @param index_context Reference to the main index for context (e.g.,
-   * search).
-   * @param graph_entry_point_rowid Reference to the index's current entry point
-   * rowid.
+   * search capabilities).
    */
-  GraphOperations(
-      const LmDiskannConfig &config, const NodeLayoutOffsets &node_layout,
-      NodeManager &node_manager, LmDiskannIndex &index_context,
-      row_t &graph_entry_point_rowid,     // Managed by LmDiskannIndex, opaquely
-                                          // updated here
-      IndexPointer &graph_entry_point_ptr // Managed by LmDiskannIndex, opaquely
-                                          // updated here
-  );
+  GraphOperations(const LmDiskannConfig &config,
+                  const NodeLayoutOffsets &node_layout,
+                  NodeManager &node_manager, LmDiskannIndex &index_context);
 
   /**
    * @brief Processes the insertion of a new node into the graph.
@@ -67,6 +61,20 @@ public:
    * @return A valid row_t to be used as a search entry point.
    */
   row_t SelectEntryPointForSearch(RandomEngine &engine);
+
+  /**
+   * @brief Gets the current graph entry point pointer.
+   * @return IndexPointer to the entry point node. Can be invalid if no entry
+   * point.
+   */
+  IndexPointer GetGraphEntryPointPointer() const;
+
+  /**
+   * @brief Gets the row_id of the current graph entry point.
+   * @return row_t of the entry point node. Can be
+   * NumericLimits<row_t>::Maximum() if no entry point.
+   */
+  row_t GetGraphEntryPointRowId() const;
 
 private:
   /**
@@ -100,8 +108,13 @@ private:
   NodeManager &node_manager_; // Updated from LmDiskannNodeManager
   LmDiskannIndex
       &index_context_; // Provides context, e.g., PerformSearch capability
-  row_t &graph_entry_point_rowid_;      // Reference to LmDiskannIndex's member
-  IndexPointer &graph_entry_point_ptr_; // Reference to LmDiskannIndex's member
+
+  // --- Entry Point State (Owned by GraphOperations) ---
+  /** @brief Pointer to the current graph entry point node. Initialized to
+   * invalid. */
+  IndexPointer graph_entry_point_ptr_;
+  /** @brief Cached row_id of the entry point node. Initialized to invalid. */
+  row_t graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum();
 };
 
 } // namespace duckdb

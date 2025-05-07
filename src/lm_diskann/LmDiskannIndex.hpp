@@ -17,7 +17,9 @@
 #include "duckdb/storage/table_io_manager.hpp"
 
 // Include headers for the refactored components
+#include "GraphOperations.hpp"    // New component
 #include "LmDiskannScanState.hpp" // For scan state definition
+#include "NodeManager.hpp"        // New component
 #include "config.hpp"             // Include the new config header
 
 #include <map>    // Using std::map for in-memory RowID mapping for now
@@ -56,8 +58,6 @@ struct LmDiskannDBState {
   TableIOManager &table_io_manager; // Reference to DuckDB's IO manager.
   LogicalType indexed_column_type;  // The full logical type of the indexed
                                     // column (e.g., ARRAY(FLOAT, 128)).
-  unique_ptr<FixedSizeAllocator>
-      allocator; // Manages disk blocks for index nodes.
   IndexPointer
       metadata_ptr; // Pointer to the block holding persistent index metadata.
 };
@@ -180,6 +180,19 @@ public:
     return config_.node_vector_type;
   }
 
+  // --- New Public Methods for GraphOperations --- //
+  /** @brief Public wrapper for calculating approximate distance. */
+  float PublicCalculateApproxDistance(const float *query_ptr,
+                                      const_data_ptr_t compressed_neighbor_ptr);
+  /** @brief Public wrapper for compressing a vector for edge storage. */
+  void PublicCompressVectorForEdge(const float *input_vector,
+                                   data_ptr_t output_compressed_vector);
+  /** @brief Public wrapper for converting a raw node vector to float. */
+  void PublicConvertNodeVectorToFloat(const_data_ptr_t raw_node_vector,
+                                      float *float_vector_out);
+  /** @brief Public method to mark the index as dirty. */
+  void PublicMarkDirty(bool dirty_state = true);
+
 private:
   friend class LmDiskannStorageHelper; // Allow storage helpers access
   /**
@@ -195,93 +208,45 @@ private:
                             bool find_exact_distances);
 
   // --- Core Parameters (Held in Config Struct) --- //
-  //! @brief Parsed and validated configuration parameters.
+  /** @brief Parsed and validated configuration parameters. */
   LmDiskannConfig config_;
-  //! @brief Calculated layout based on config.
+  /** @brief Calculated layout based on config. */
   NodeLayoutOffsets node_layout_;
-  //! @brief Final aligned size of each node's block on disk.
+  /** @brief Final aligned size of each node's block on disk. */
   idx_t block_size_bytes_;
 
-  // --- DuckDB Integration State --- //
-  //! @brief Holds DuckDB-related references and state.
-  LmDiskannDBState db_state_;
+  // --- DuckDB Integration State (subset of original) ---
+  /** @brief Holds DB reference, IO manager, and indexed column type. */
+  LmDiskannDBState db_state_; // Will be DbIntegrationState later
 
-  //! @brief Path to the index-specific data directory (e.g.,
-  //! [db_name].lmd_idx/[index_name]/)
+  /** @brief Path to the index-specific data directory (e.g.,
+   * [db_name].lmd_idx/[index_name]/) */
   string index_data_path_;
 
-  //! @brief Internal format version (for metadata check).
+  /** @brief Internal format version (for metadata check). */
   uint8_t format_version_;
 
-  // --- RowID Mapping (In-Memory Placeholder) --- //
-  //! @brief Maps row_t -> IndexPointer (temporary).
-  std::map<row_t, IndexPointer> in_memory_rowid_map_;
-  // IndexPointer rowid_map_root_ptr_; // Persisted root of the ART index (when
-  // implemented)
-
-  // --- Entry Point --- //
-  //! @brief Pointer to the current graph entry point node.
-  IndexPointer graph_entry_point_ptr_;
-  //! @brief Cached row_id of the entry point node.
-  row_t graph_entry_point_rowid_;
+  // --- NEW COMPONENT INSTANCES --- //
+  /** @brief Manages node allocation, RowID mapping, and raw data access. */
+  unique_ptr<NodeManager> node_manager_;
+  /** @brief Manages graph algorithms, structure, and entry point. */
+  unique_ptr<GraphOperations> graph_operations_;
 
   // --- Delete Queue --- //
-  //! @brief Pointer to the head of the delete queue linked list.
+  /** @brief Pointer to the head of the delete queue linked list. */
   IndexPointer delete_queue_head_ptr_;
 
-  //! @brief Tracks if changes need persisting.
+  /** @brief Tracks if changes need persisting. */
   bool is_dirty_ = false;
 
-  // --- Helper Methods (Private to LmDiskannIndex) --- //
+  // --- Helper Methods (Private to LmDiskannIndex) ---
   /** @brief Initializes structures for a new, empty index. */
   void InitializeNewIndex(idx_t estimated_cardinality);
   /** @brief Loads index metadata and state from existing storage info. */
   void LoadFromStorage(const IndexStorageInfo &storage_info);
 
-  // --- Storage interaction helpers (using in-memory map for now) --- //
-  /** @brief Tries to find the node pointer for a given RowID using the current
-   * map. */
-  bool TryGetNodePointer(row_t row_id,
-                         IndexPointer &node_ptr); // Looks up row_id in the map
-  /** @brief Allocates a new node block and adds it to the map. */
-  IndexPointer AllocateNode(row_t row_id); // Allocates block and updates map
-  /** @brief Removes a node from the map and frees its block. */
-  void DeleteNodeFromMapAndFreeBlock(
-      row_t row_id); // Deletes from map and potentially frees block
-  /** @brief Gets a mutable data pointer to the node data using its
-   * IndexPointer. */
-  data_ptr_t GetNodeDataMutable(IndexPointer node_ptr);
-  /** @brief Gets a read-only data pointer to the node data using its
-   * IndexPointer. */
-  const_data_ptr_t GetNodeData(IndexPointer node_ptr);
-
-  // --- Insertion Helper --- //
-  /** @brief Finds neighbors for a new node and connects them (updates new node
-   * and neighbors). */
-  void FindAndConnectNeighbors(row_t new_node_rowid, IndexPointer new_node_ptr,
-                               const float *new_node_vector);
-  /** @brief Applies robust pruning to a node's potential neighbors. Updates the
-   * node's block. */
-  void RobustPrune(row_t node_rowid, IndexPointer node_ptr,
-                   std::vector<std::pair<float, row_t>> &candidates);
-
-  // --- Entry Point Helpers --- //
-  /** @brief Gets the current valid entry point RowID (might involve lookup or
-   * random selection). */
-  row_t GetEntryPoint();
-  /** @brief Sets the current entry point pointer and cached RowID. */
-  void SetEntryPoint(row_t row_id, IndexPointer node_ptr);
-  /** @brief Gets a random RowID from the current set of nodes (placeholder
-   * using map). */
-  row_t GetRandomNodeID(); // Placeholder using map
-
-  // --- Deletion Helper --- //
-  /** @brief Adds a deleted RowID to the persistent delete queue. */
-  void EnqueueDeletion(row_t deleted_row_id);
-  /** @brief Processes the delete queue (placeholder - called by Vacuum). */
-  void ProcessDeletionQueue(); // Placeholder
-
-  // --- Distance Helpers --- //
+  // --- Original Private Distance/Conversion Helpers (to be wrapped or moved)
+  // --- //
   /** @brief Calculates approximate distance using ternary compressed vector.
    * Uses config_. */
   float CalculateApproxDistance(const float *query_ptr,

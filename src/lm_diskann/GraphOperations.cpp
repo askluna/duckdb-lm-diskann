@@ -24,13 +24,9 @@ namespace duckdb {
 GraphOperations::GraphOperations(const LmDiskannConfig &config,
                                  const NodeLayoutOffsets &node_layout,
                                  NodeManager &node_manager,
-                                 LmDiskannIndex &index_context,
-                                 row_t &graph_entry_point_rowid,
-                                 IndexPointer &graph_entry_point_ptr)
+                                 LmDiskannIndex &index_context)
     : config_(config), node_layout_(node_layout), node_manager_(node_manager),
-      index_context_(index_context),
-      graph_entry_point_rowid_(graph_entry_point_rowid),
-      graph_entry_point_ptr_(graph_entry_point_ptr) {}
+      index_context_(index_context) {}
 
 // Placeholder for SearchForCandidates, which would replicate PerformSearch or
 // call it via index_context_ This is a complex function that might be better
@@ -340,6 +336,22 @@ row_t GraphOperations::SelectEntryPointForSearch(RandomEngine &engine) {
   // robust. For now, if random selection fails, we indicate no entry point
   // found.
   return NumericLimits<row_t>::Maximum();
+}
+
+/**
+ * @brief Gets the current graph entry point pointer.
+ * @return IndexPointer to the entry point node.
+ */
+IndexPointer GraphOperations::GetGraphEntryPointPointer() const {
+  return graph_entry_point_ptr_;
+}
+
+/**
+ * @brief Gets the row_id of the current graph entry point.
+ * @return row_t of the entry point node.
+ */
+row_t GraphOperations::GetGraphEntryPointRowId() const {
+  return graph_entry_point_rowid_;
 }
 
 } // namespace duckdb

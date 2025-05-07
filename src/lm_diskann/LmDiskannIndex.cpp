@@ -8,8 +8,10 @@
 #include "LmDiskannIndex.hpp"
 
 // Include refactored component headers
-#include "LmDiskannScanState.hpp" // For LmDiskannScanState
-#include "NodeAccessors.hpp"
+#include "GraphOperations.hpp" // New
+#include "LmDiskannScanState.hpp"
+#include "NodeAccessors.hpp" // Now directly used by GraphOperations primarily
+#include "NodeManager.hpp"   // New
 #include "config.hpp"
 #include "distance.hpp" // For distance/conversion functions
 #include "search.hpp"   // For PerformSearch
@@ -77,8 +79,9 @@ LmDiskannIndex::LmDiskannIndex(
                                     // derived logical type
       format_version_(LMDISKANN_CURRENT_FORMAT_VERSION),
       graph_entry_point_rowid_(
-          NumericLimits<row_t>::Maximum()) // Initialize entry point rowid as
-                                           // invalid
+          NumericLimits<row_t>::Maximum()), // Initialize entry point rowid as
+                                            // invalid
+      is_dirty_(false)                      // Initialize is_dirty_
 {
   // 1. Parse WITH clause options into the config struct
   config_ = ParseOptions(options);
@@ -122,6 +125,17 @@ LmDiskannIndex::LmDiskannIndex(
   auto &buffer_manager = BufferManager::GetBufferManager(db_state_.db);
   db_state_.allocator =
       make_uniq<FixedSizeAllocator>(buffer_manager, block_size_bytes_);
+
+  // Instantiate NodeManager (manages allocator and rowid_map)
+  // The original db_state_.allocator is now owned by node_manager_
+  auto &buffer_manager = BufferManager::GetBufferManager(db_state_.db);
+  node_manager_ = make_uniq<NodeManager>(buffer_manager, block_size_bytes_);
+
+  // Instantiate GraphOperations (needs config, layout, node_manager, and this
+  // index context)
+  graph_operations_ = make_uniq<GraphOperations>(
+      config_, node_layout_, *node_manager_, *this, graph_entry_point_rowid_,
+      graph_entry_point_ptr_);
 
   // Determine and create the index-specific directory path
   // This path will be used by InitializeNewIndex or LoadFromStorage
@@ -210,7 +224,27 @@ LmDiskannIndex::LmDiskannIndex(
 
 LmDiskannIndex::~LmDiskannIndex() = default;
 
-// --- BoundIndex Method Implementations --- //
+// --- New Public Wrapper Methods ---
+void LmDiskannIndex::PublicMarkDirty(bool dirty_state) {
+  this->is_dirty_ = dirty_state;
+}
+
+float LmDiskannIndex::PublicCalculateApproxDistance(
+    const float *query_ptr, const_data_ptr_t compressed_neighbor_ptr) {
+  return this->CalculateApproxDistance(query_ptr, compressed_neighbor_ptr);
+}
+
+void LmDiskannIndex::PublicCompressVectorForEdge(
+    const float *input_vector, data_ptr_t output_compressed_vector) {
+  this->CompressVectorForEdge(input_vector, output_compressed_vector);
+}
+
+void LmDiskannIndex::PublicConvertNodeVectorToFloat(
+    const_data_ptr_t raw_node_vector, float *float_vector_out) {
+  this->ConvertNodeVectorToFloat(raw_node_vector, float_vector_out);
+}
+
+// --- BoundIndex Method Implementations (Updated) --- //
 
 /**
  * @brief Appends a chunk of data to the index.
@@ -777,197 +811,6 @@ template float
 LmDiskannIndex::CalculateExactDistance<float, int8_t>(const float *,
                                                       const_data_ptr_t);
 
-// --- Robust Pruning Helper --- //
-
-/**
- * @brief Applies the Robust Prune algorithm to select neighbors for a node.
- * @details Implements the pruning logic from the DiskANN paper (Algorithm 1).
- *          Updates the neighbors directly in the node's block buffer.
- * @param node_rowid RowID of the node being pruned.
- * @param node_ptr IndexPointer to the node's block.
- * @param candidates Initial list of potential neighbors (distance, row_id
- * pairs).
- */
-void LmDiskannIndex::RobustPrune(
-    row_t node_rowid, IndexPointer node_ptr,
-    std::vector<std::pair<float, row_t>> &candidates) {
-
-  uint32_t max_neighbors = config_.r;
-  data_ptr_t node_data = nullptr;
-
-  try {
-    // Get writable data pointer
-    node_data = GetNodeDataMutable(node_ptr);
-
-    uint16_t current_neighbor_count =
-        NodeAccessors::GetNeighborCount(node_data);
-    row_t *current_neighbor_ids =
-        NodeAccessors::GetNeighborIDsPtrMutable(node_data, node_layout_);
-
-    vector<float> node_vector_float(config_.dimensions);
-    const_data_ptr_t node_vector_raw_ptr =
-        NodeAccessors::GetNodeVector(node_data, node_layout_);
-    ConvertNodeVectorToFloat(node_vector_raw_ptr, node_vector_float.data());
-
-    for (uint16_t i = 0; i < current_neighbor_count; ++i) {
-      row_t existing_id = current_neighbor_ids[i];
-      if (existing_id == NumericLimits<row_t>::Maximum())
-        continue;
-
-      bool already_candidate = false;
-      for (const auto &cand : candidates) {
-        if (cand.second == existing_id) {
-          already_candidate = true;
-          break;
-        }
-      }
-      if (already_candidate)
-        continue;
-
-      TernaryPlanesView existing_neighbor_planes =
-          NodeAccessors::GetNeighborTernaryPlanes(node_data, node_layout_, i,
-                                                  config_.dimensions);
-      if (existing_neighbor_planes.IsValid()) {
-        float dist = CalculateApproxDistance(
-            node_vector_float.data(), existing_neighbor_planes.positive_plane);
-        candidates.push_back({dist, existing_id});
-      } else {
-        Printer::Print(
-            StringUtil::Format("Warning: Invalid planes for existing neighbor "
-                               "%lld in RobustPrune.",
-                               existing_id));
-      }
-    }
-
-    // Sort by row_id first for unique()
-    std::sort(candidates.begin(), candidates.end(),
-              [](const auto &a, const auto &b) { return a.second < b.second; });
-    auto unique_end = std::unique(
-        candidates.begin(), candidates.end(),
-        [](const auto &a, const auto &b) { return a.second == b.second; });
-    candidates.erase(unique_end, candidates.end());
-
-    // Sort again by distance for alpha pruning
-    std::sort(candidates.begin(), candidates.end());
-
-    std::vector<row_t> final_neighbor_ids;
-    std::vector<vector<uint8_t>> final_compressed_neighbors;
-    final_neighbor_ids.reserve(max_neighbors);
-    final_compressed_neighbors.reserve(max_neighbors);
-    vector<float> candidate_vector_float(config_.dimensions);
-
-    for (const auto &candidate : candidates) {
-      if (final_neighbor_ids.size() >= max_neighbors)
-        break;
-
-      row_t candidate_id = candidate.second;
-      if (candidate_id == node_rowid)
-        continue;
-
-      IndexPointer candidate_ptr;
-      if (!TryGetNodePointer(candidate_id, candidate_ptr))
-        continue;
-
-      const_data_ptr_t cand_data_ptr;
-      const_data_ptr_t cand_vec_ptr_raw;
-      try {
-        cand_data_ptr = GetNodeData(candidate_ptr); // Read-only access
-        cand_vec_ptr_raw =
-            NodeAccessors::GetNodeVector(cand_data_ptr, node_layout_);
-        ConvertNodeVectorToFloat(cand_vec_ptr_raw,
-                                 candidate_vector_float.data());
-      } catch (...) {
-        continue;
-      }
-
-      bool pruned = false;
-      float exact_dist_node_to_candidate = ComputeExactDistanceFloat(
-          node_vector_float.data(), candidate_vector_float.data(),
-          config_.dimensions, config_.metric_type);
-
-      for (size_t i = 0; i < final_neighbor_ids.size(); ++i) {
-        row_t existing_final_id = final_neighbor_ids[i];
-        IndexPointer existing_final_ptr;
-        if (!TryGetNodePointer(existing_final_id, existing_final_ptr))
-          continue;
-
-        vector<float> existing_final_vector_float(config_.dimensions);
-        try {
-          auto existing_final_data_ptr =
-              GetNodeData(existing_final_ptr); // Read-only access
-          auto existing_final_vec_ptr_raw = NodeAccessors::GetNodeVector(
-              existing_final_data_ptr, node_layout_);
-          ConvertNodeVectorToFloat(existing_final_vec_ptr_raw,
-                                   existing_final_vector_float.data());
-        } catch (...) {
-          continue;
-        }
-
-        float dist_existing_final_to_candidate = ComputeExactDistanceFloat(
-            existing_final_vector_float.data(), candidate_vector_float.data(),
-            config_.dimensions, config_.metric_type);
-
-        if (exact_dist_node_to_candidate >
-            config_.alpha * dist_existing_final_to_candidate) {
-          pruned = true;
-          break;
-        }
-      }
-
-      if (!pruned) {
-        final_neighbor_ids.push_back(candidate_id);
-        final_compressed_neighbors.emplace_back(
-            node_layout_.ternary_edge_size_bytes);
-        CompressVectorForEdge(candidate_vector_float.data(),
-                              final_compressed_neighbors.back().data());
-      }
-    }
-
-    uint16_t final_count = static_cast<uint16_t>(final_neighbor_ids.size());
-    D_ASSERT(final_count <= max_neighbors);
-
-    NodeAccessors::SetNeighborCount(node_data, final_count);
-    row_t *dest_ids =
-        NodeAccessors::GetNeighborIDsPtrMutable(node_data, node_layout_);
-
-    idx_t plane_size_bytes = GetTernaryPlaneSizeBytes(config_.dimensions);
-    data_ptr_t dest_pos_planes_base =
-        node_data + node_layout_.neighbor_pos_planes_offset;
-    data_ptr_t dest_neg_planes_base =
-        node_data + node_layout_.neighbor_neg_planes_offset;
-
-    for (uint16_t i = 0; i < final_count; ++i) {
-      dest_ids[i] = final_neighbor_ids[i];
-      data_ptr_t dest_pos_plane_i = dest_pos_planes_base + i * plane_size_bytes;
-      data_ptr_t dest_neg_plane_i = dest_neg_planes_base + i * plane_size_bytes;
-      memcpy(dest_pos_plane_i, final_compressed_neighbors[i].data(),
-             plane_size_bytes);
-      memcpy(dest_neg_plane_i,
-             final_compressed_neighbors[i].data() + plane_size_bytes,
-             plane_size_bytes);
-    }
-    for (uint16_t i = final_count; i < max_neighbors; ++i) {
-      dest_ids[i] = NumericLimits<row_t>::Maximum();
-      data_ptr_t dest_pos_plane_i = dest_pos_planes_base + i * plane_size_bytes;
-      data_ptr_t dest_neg_plane_i = dest_neg_planes_base + i * plane_size_bytes;
-      memset(dest_pos_plane_i, 0, plane_size_bytes);
-      memset(dest_neg_plane_i, 0, plane_size_bytes);
-    }
-
-    // Mark buffer modified (assuming handle destructor manages this)
-    // FIXME: Verify block modification handling
-    // auto block =
-    // BufferManager::GetBufferManager(db_state_.db).GetBlock(handle.GetBlockId());
-    // if (block) block->SetModified();
-
-  } catch (const std::exception &e) {
-    Printer::Print(StringUtil::Format(
-        "Error during RobustPrune for node %lld: %s", node_rowid, e.what()));
-    // Re-throw? Or just log and potentially leave node in inconsistent state?
-    throw;
-  }
-}
-
 // --- Insertion Helper --- //
 /**
  * @brief Finds potential neighbors for a new node and connects them.
@@ -1074,191 +917,6 @@ void LmDiskannIndex::EnqueueDeletion(row_t deleted_row_id) {
  */
 void LmDiskannIndex::ProcessDeletionQueue() {
   Printer::Print("LmDiskannIndex::ProcessDeletionQueue is not implemented.");
-}
-
-// --- Entry Point Helpers --- //
-/**
- * @brief Gets a valid row ID to use as the entry point for searches.
- * @details Checks the cached entry point first. If invalid or deleted,
- *          selects a random node as the new entry point.
- * @return A valid entry point row ID, or NumericLimits<row_t>::Maximum() if the
- * index is empty.
- */
-row_t LmDiskannIndex::GetEntryPoint() {
-  if (graph_entry_point_rowid_ != NumericLimits<row_t>::Maximum()) {
-    IndexPointer ptr_check;
-    if (TryGetNodePointer(graph_entry_point_rowid_, ptr_check)) {
-      return graph_entry_point_rowid_;
-    } else {
-      Printer::Print(
-          StringUtil::Format("Warning: Cached entry point %lld deleted.",
-                             graph_entry_point_rowid_));
-      graph_entry_point_ptr_.Clear();
-      graph_entry_point_rowid_ = NumericLimits<row_t>::Maximum();
-      is_dirty_ = true;
-    }
-  }
-
-  row_t random_id = GetRandomNodeID();
-  if (random_id != NumericLimits<row_t>::Maximum()) {
-    IndexPointer random_ptr;
-    if (TryGetNodePointer(random_id, random_ptr)) {
-      SetEntryPoint(random_id, random_ptr);
-      return random_id;
-    } else {
-      Printer::Print(
-          StringUtil::Format("Warning: Random node %lld chosen as entry point "
-                             "could not be found in map.",
-                             random_id));
-    }
-  }
-  return NumericLimits<row_t>::Maximum();
-}
-
-/**
- * @brief Sets the graph entry point.
- * @param row_id The row ID of the new entry point node.
- * @param node_ptr The IndexPointer to the new entry point node.
- */
-void LmDiskannIndex::SetEntryPoint(row_t row_id, IndexPointer node_ptr) {
-  graph_entry_point_rowid_ = row_id;
-  graph_entry_point_ptr_ = node_ptr;
-  is_dirty_ = true;
-  // PersistMetadata(); // Persist immediately? Let Checkpoint handle it.
-}
-
-/**
- * @brief Selects a random node ID from the index (Placeholder).
- * @warning Uses inefficient map iteration. Replace with ART sampling when
- * available.
- * @return A random row ID, or NumericLimits<row_t>::Maximum() if the index is
- * empty.
- */
-row_t LmDiskannIndex::GetRandomNodeID() {
-  // Placeholder: Inefficient map iteration. Replace with ART sampling.
-  if (in_memory_rowid_map_.empty()) {
-    return NumericLimits<row_t>::Maximum();
-  }
-  // Instantiate a local RandomEngine. Consider using RandomEngine::Get(context)
-  // if available.
-  RandomEngine generator;
-  std::uniform_int_distribution<idx_t> distribution(
-      0, in_memory_rowid_map_.size() - 1);
-  idx_t random_idx = distribution(generator);
-  auto it = std::next(in_memory_rowid_map_.begin(), random_idx);
-  return (it != in_memory_rowid_map_.end()) ? it->first
-                                            : NumericLimits<row_t>::Maximum();
-}
-
-// --- Storage interaction helpers (using in-memory map for now) --- //
-
-/**
- * @brief Tries to retrieve the IndexPointer for a given row ID from the
- * in-memory map.
- * @param row_id The row ID to look up.
- * @param node_ptr Output parameter for the found IndexPointer.
- * @return True if the row ID was found, false otherwise.
- */
-bool LmDiskannIndex::TryGetNodePointer(row_t row_id, IndexPointer &node_ptr) {
-  auto it = in_memory_rowid_map_.find(row_id);
-  if (it != in_memory_rowid_map_.end()) {
-    node_ptr = it->second;
-    // TODO: Verify pointer validity in allocator?
-    return true;
-  }
-  node_ptr.Clear();
-  return false;
-}
-
-/**
- * @brief Allocates a new block in the FixedSizeAllocator for a node and maps
- * the row ID.
- * @details If the row ID already exists but its pointer is invalid (e.g., after
- * vacuum), it reuses the row ID. Updates the in-memory map.
- * @param row_id The row ID to associate with the new node.
- * @return IndexPointer to the newly allocated block.
- */
-IndexPointer LmDiskannIndex::AllocateNode(row_t row_id) {
-  if (in_memory_rowid_map_.count(row_id)) {
-    IndexPointer existing_ptr;
-    if (TryGetNodePointer(row_id, existing_ptr)) {
-      Printer::Print(StringUtil::Format("Warning: AllocateNode called for "
-                                        "existing row_id %lld. Reusing block.",
-                                        row_id));
-      return existing_ptr;
-    }
-    in_memory_rowid_map_.erase(row_id);
-  }
-  if (!db_state_.allocator) {
-    throw InternalException("Allocator not initialized in AllocateNode.");
-  }
-  IndexPointer new_node_ptr = db_state_.allocator->New();
-  if (new_node_ptr.Get() == 0) {
-    throw InternalException("Failed to allocate new block in AllocateNode.");
-  }
-  in_memory_rowid_map_[row_id] = new_node_ptr;
-  return new_node_ptr;
-}
-
-/**
- * @brief Removes a node's mapping from the in-memory map and frees its block in
- * the allocator.
- * @param row_id The row ID of the node to delete.
- */
-void LmDiskannIndex::DeleteNodeFromMapAndFreeBlock(row_t row_id) {
-  auto it = in_memory_rowid_map_.find(row_id);
-  if (it != in_memory_rowid_map_.end()) {
-    IndexPointer node_ptr = it->second;
-    if (db_state_.allocator) {
-      db_state_.allocator->Free(node_ptr);
-    }
-    in_memory_rowid_map_.erase(it);
-  } else {
-    // Optional Warning
-  }
-}
-
-/**
- * @brief Gets a mutable pointer to the data within a node's block.
- * @details Uses the FixedSizeAllocator to get the data pointer, marking the
- * buffer as dirty.
- * @param node_ptr The IndexPointer of the node.
- * @return A writable data_ptr_t to the start of the node's segment data.
- * @throws IOException if node_ptr is invalid.
- * @throws InternalException if the allocator is not initialized.
- */
-data_ptr_t LmDiskannIndex::GetNodeDataMutable(IndexPointer node_ptr) {
-  // Replace IsValid with check against 0
-  if (node_ptr.Get() == 0) {
-    throw IOException("Invalid node pointer provided to GetNodeDataMutable.");
-  }
-  if (!db_state_.allocator) {
-    throw InternalException("Allocator not initialized in GetNodeBuffer.");
-  }
-  return db_state_.allocator->Get(node_ptr,
-                                  true); // Get mutable pointer, mark dirty
-}
-
-/**
- * @brief Gets a read-only pointer to the data within a node's block.
- * @details Uses the FixedSizeAllocator to get the data pointer without marking
- * the buffer as dirty.
- * @param node_ptr The IndexPointer of the node.
- * @return A read-only const_data_ptr_t to the start of the node's segment data.
- * @throws IOException if node_ptr is invalid.
- * @throws InternalException if the allocator is not initialized.
- */
-const_data_ptr_t LmDiskannIndex::GetNodeData(IndexPointer node_ptr) {
-  // Replace IsValid with check against 0
-  if (node_ptr.Get() == 0) {
-    throw IOException("Invalid node pointer provided to GetNodeData.");
-  }
-  if (!db_state_.allocator) {
-    throw InternalException("Allocator not initialized in GetNodeBuffer.");
-  }
-  // Use the allocator's Get method directly, requesting non-dirty access
-  return db_state_.allocator->Get(node_ptr,
-                                  false); // Get const pointer, don't mark dirty
 }
 
 } // namespace duckdb
