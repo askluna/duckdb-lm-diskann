@@ -5,6 +5,7 @@
  */
 #pragma once
 
+#include "../common/types.hpp" // Include common types
 #include "duckdb.hpp"
 #include "duckdb/common/types/row/row_layout.hpp"
 #include "duckdb/common/types/vector.hpp"
@@ -36,37 +37,26 @@ struct LmDiskannScanState : public ::duckdb::IndexScanState {
    * @param k_param The number of nearest neighbors requested (top-k).
    * @param l_search_param The search list size parameter (L_search).
    */
-  LmDiskannScanState(const ::duckdb::Vector &query_vec, idx_t k_param,
-                     uint32_t l_search_param);
+  LmDiskannScanState(const ::duckdb::Vector &query_vec, common::idx_t k_param,
+                     common::idx_t l_search_param); // Use common::idx_t
+  ~LmDiskannScanState() override = default; // Add virtual destructor override
 
-  ::duckdb::Vector query_vector; // The query vector itself (keeps data alive).
-  ::duckdb::const_data_ptr_t
-      query_vector_ptr; // Pointer to the query vector data
-                        // (usually float). Cast before use.
-  idx_t k;              // Number of nearest neighbors requested.
-  uint32_t l_search;    // Search list size parameter (L_search).
+  ::duckdb::Vector query_vector_storage; // Stores the query vector data.
+  const float
+      *query_vector_ptr;  // Pointer to the raw float data of the query vector.
+  common::idx_t k;        // Number of nearest neighbors requested.
+  common::idx_t l_search; // Search list size parameter (L_search).
 
-  // Type alias for distance/node pairs (using float for distance).
-  using dist_node_pair_t = std::pair<float, ::duckdb::row_t>;
+  // --- State for search process (managed internally by Searcher
+  // implementation) --- std::priority_queue<std::pair<float, common::row_t>>
+  // candidates; // No longer needed here, Searcher manages internally
+  // std::set<common::row_t> visited; // No longer needed here, Searcher manages
+  // internally
 
-  // Min-priority queue for candidates (stores {-distance, node_id} to get max
-  // distance at top). We use negative distance because priority_queue is a
-  // max-heap.
-  std::priority_queue<dist_node_pair_t> candidates;
-
-  // Max-priority queue to store the final top-k results found so far {distance,
-  // node_id}. This is populated *after* the main search, potentially with exact
-  // distances.
-  std::priority_queue<dist_node_pair_t> top_candidates;
-
-  // Set of nodes (RowIDs) already visited during the search to avoid
-  // cycles/redundancy.
-  std::set<::duckdb::row_t> visited;
-
-  // --- Fields below might be used by the IndexScanExecutor --- //
-  // std::vector<row_t> result_rowids; // Row IDs of potential candidates -
-  // handled by base class? std::vector<float> result_scores; // Corresponding
-  // negated similarity scores - handled by base class?
+  // --- Results ---
+  // Orchestrator::Search directly populates this vector with the final top-k
+  // RowIDs.
+  std::vector<common::row_t> result_row_ids;
 };
 
 } // namespace duckdb

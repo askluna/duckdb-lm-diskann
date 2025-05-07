@@ -1,4 +1,10 @@
 #include "Orchestrator.hpp"
+#include "../common/types.hpp"
+#include "../store/IShadowStorageService.hpp"
+#include "IGraphManager.hpp"
+#include "ISearcher.hpp"
+#include "IStorageManager.hpp"
+#include <vector>
 
 // For now, include iostream for placeholder messages if needed.
 // Replace with proper logging mechanism later.
@@ -54,50 +60,189 @@ void Orchestrator::BuildIndex(
   index_loaded_ = true;
 }
 
-void Orchestrator::Search(/* illustrative params: const float* query_vector, size_t query_dim, uint32_t top_k, std::vector<int64_t>& results */) {
-  std::cout << "Orchestrator: Search called." << std::endl;
+void Orchestrator::Search(const float *query_vector, common::idx_t k_neighbors,
+                          std::vector<common::row_t> &result_row_ids,
+                          common::idx_t search_list_size) {
+  // std::cout << "Orchestrator: Search called." << std::endl;
   if (!index_loaded_) {
-    std::cerr << "Orchestrator: Error - Index not loaded for search."
-              << std::endl;
-    return;
+    throw std::runtime_error(
+        "Orchestrator: Error - Index not loaded for search.");
   }
-  // 1. Validate query parameters.
-  // 2. Delegate to the Searcher component, providing it necessary graph access
-  // (perhaps via GraphManager or direct Vamana graph data).
-  //    - Searcher will use IndexConfig (e.g., search_list_size).
-  // 3. Return results.
+  if (!searcher_ || !graph_manager_) {
+    throw std::runtime_error(
+        "Orchestrator: Searcher or GraphManager not initialized.");
+  }
+  if (k_neighbors == 0) {
+    throw std::runtime_error(
+        "Orchestrator: k_neighbors cannot be 0 for search.");
+  }
+
+  // Clear previous results
+  result_row_ids.clear();
+
+  // Determine the actual search list size (L_search)
+  common::idx_t L_search =
+      (search_list_size > 0) ? search_list_size : config_.l_search;
+  if (L_search < k_neighbors) {
+    // Warn or adjust? L_search should generally be >= k
+    // std::cout << "Warning: L_search (" << L_search << ") < k (" <<
+    // k_neighbors << ")" << std::endl;
+    L_search = k_neighbors;
+  }
+
+  try {
+    // Delegate the actual search algorithm to the ISearcher implementation
+    // Pass the graph_manager for graph traversal access.
+    // The ISearcher interface might need refinement based on exact needs.
+    searcher_->Search(query_vector, config_, graph_manager_.get(), k_neighbors,
+                      result_row_ids, L_search);
+
+    // ISearcher implementation should populate result_row_ids directly with the
+    // final top-k sorted RowIDs. No further sorting needed here if ISearcher
+    // handles it.
+
+  } catch (const std::exception &e) {
+    std::cerr << "Orchestrator: Error during Search: " << e.what() << std::endl;
+    result_row_ids.clear(); // Ensure empty results on error
+    throw;                  // Re-throw
+  }
 }
 
 void Orchestrator::Insert(const float *data_vector, size_t data_dim,
-                          int64_t label) {
+                          common::row_t label) {
   std::cout << "Orchestrator: Insert called for label: " << label << std::endl;
   if (!index_loaded_) {
-    std::cerr << "Orchestrator: Error - Index not loaded for insert."
-              << std::endl;
-    return;
+    throw std::runtime_error(
+        "Orchestrator: Error - Index not loaded for insert.");
   }
-  // 1. Use GraphManager to insert the new vector into the graph.
-  //    - This might involve finding neighbors, updating links.
-  // 2. Update metadata (e.g., point count).
-  // 3. Use IShadowStorageService to log the insertion transactionally.
-  // 4. Potentially trigger consolidation or other maintenance operations based
-  // on IndexConfig.
+  if (data_dim != config_.dimensions) {
+    // This check might be better done in LmDiskannIndex before calling
+    // orchestrator
+    throw std::runtime_error("Orchestrator: Insert data dimension mismatch.");
+  }
+  if (!graph_manager_ || !searcher_ ||
+      !storage_manager_) { // storage_manager needed potentially for shadow
+                           // service coordination
+    throw std::runtime_error(
+        "Orchestrator: Managers not initialized for Insert.");
+  }
+
+  common::IndexPointer new_node_ptr;
+  bool node_added = false;
+  try {
+    // 1. Allocate node and store vector data (via GraphManager)
+    node_added = graph_manager_->AddNode(label, data_vector, config_.dimensions,
+                                         new_node_ptr);
+    if (!node_added || !new_node_ptr.IsValid()) {
+      throw std::runtime_error("Failed to add node via GraphManager.");
+    }
+
+    // 2. Find candidate neighbors for the new node (using Searcher)
+    //    Need a temporary vector to hold search results (RowIDs)
+    //    The number of neighbors to search for depends on L_insert from config
+    std::vector<common::row_t> candidate_neighbors;
+    // Note: Search interface might need refinement. Does it return distances?
+    // How many neighbors to search for? L_insert? A fixed number?
+    // Assuming searcher can find appropriate candidates for RobustPrune.
+    // Placeholder call - ISearcher::Search might not be the right method for
+    // this. Maybe IGraphManager should handle finding neighbors for insertion?
+    // For now, assume we get candidates somehow. Let's use L_insert neighbors
+    // for pruning.
+    searcher_->Search(data_vector, config_, graph_manager_.get(),
+                      config_.l_insert, candidate_neighbors, config_.l_insert);
+
+    // Remove self from candidates if present
+    // candidate_neighbors.erase(std::remove(candidate_neighbors.begin(),
+    // candidate_neighbors.end(), label), candidate_neighbors.end());
+
+    // 3. Prune neighbors and establish connections (via GraphManager)
+    // RobustPrune expects candidates to be modified in-place.
+    graph_manager_->RobustPrune(new_node_ptr, data_vector, candidate_neighbors,
+                                config_);
+
+    // 4. Update entry point if necessary (via GraphManager)
+    // GraphManager might handle this internally during RobustPrune or AddNode
+    // graph_manager_->UpdateEntryPointIfNeeded(new_node_ptr, label);
+
+    // 5. Log insertion with Shadow Service (if available)
+    if (shadow_storage_service_) {
+      shadow_storage_service_->LogInsert(label, new_node_ptr);
+    }
+
+    // 6. Mark index as dirty
+    SetDirty(true);
+
+  } catch (const std::exception &e) {
+    std::cerr << "Orchestrator: Error during Insert for label " << label << ": "
+              << e.what() << std::endl;
+    // Rollback? If AddNode succeeded but subsequent steps failed, need cleanup.
+    if (node_added) {
+      try {
+        graph_manager_->FreeNode(label); // Attempt to free the allocated node
+      } catch (...) {                    /* Best effort cleanup */
+      }
+    }
+    // TODO: Rollback shadow log entry if applicable
+    throw; // Re-throw
+  }
 }
 
-void Orchestrator::Delete(int64_t label) {
+void Orchestrator::Delete(common::row_t label) {
   std::cout << "Orchestrator: Delete called for label: " << label << std::endl;
   if (!index_loaded_) {
     std::cerr << "Orchestrator: Error - Index not loaded for delete."
               << std::endl;
     return;
   }
-  // 1. Mark the point as deleted (logically or physically) using GraphManager
-  // and/or StorageManager.
-  // 2. Use IShadowStorageService to log the deletion transactionally.
-  // 3. Update metadata.
+
+  bool success = true;
+  try {
+    // 1. Log to shadow store (if available)
+    if (shadow_storage_service_) {
+      shadow_storage_service_->LogDelete(label);
+    }
+
+    // 2. Add to persistent delete queue (via StorageManager)
+    if (storage_manager_) {
+      storage_manager_->EnqueueDeletion(
+          label, delete_queue_head_ptr_); // delete_queue_head_ptr_ is member of
+                                          // Orchestrator
+    } else {
+      throw std::runtime_error(
+          "StorageManager not available in Orchestrator::Delete");
+    }
+
+    // 3. Handle logical deletion in graph (e.g., remove from entry point
+    // candidates)
+    if (graph_manager_) {
+      graph_manager_->HandleNodeDeletion(label);
+    } else {
+      throw std::runtime_error(
+          "GraphManager not available in Orchestrator::Delete");
+    }
+
+    // 4. Free the node block (this might be better handled by StorageManager
+    // during vacuum?) For now, let GraphManager handle freeing the block
+    // associated with the row_id. This assumes GraphManager handles the mapping
+    // and allocator interaction.
+    if (graph_manager_) {
+      graph_manager_->FreeNode(label);
+    }
+
+    // 5. Mark index as dirty
+    SetDirty(true);
+
+  } catch (const std::exception &e) {
+    // TODO: Proper error handling/logging. Maybe rollback shadow log?
+    std::cerr << "Orchestrator: Error during Delete for label " << label << ": "
+              << e.what() << std::endl;
+    success = false;
+    // Re-throw or handle error appropriately
+    throw; // Re-throwing for now
+  }
 }
 
-void Orchestrator::Update(int64_t label, const float *new_data_vector,
+void Orchestrator::Update(common::row_t label, const float *new_data_vector,
                           size_t data_dim) {
   std::cout << "Orchestrator: Update called for label: " << label << std::endl;
   if (!index_loaded_) {
@@ -121,8 +266,31 @@ void Orchestrator::LoadIndex(const std::string &index_path) {
   // 3. Use IShadowStorageService to load any relevant shadow store state or
   // apply pending operations.
   // 4. Set internal state (e.g., `index_loaded_ = true`, `index_path_`).
-  index_path_ = index_path;
-  index_loaded_ = true; // Placeholder
+
+  // Conceptual: IStorageManager needs a method to load data and populate these
+  // fields. This might involve passing references to config_, graph_manager_
+  // and other state members, or returning a struct with all loaded data. For
+  // now, let's assume it populates the orchestrator's members directly or via a
+  // returned struct.
+  if (!storage_manager_) {
+    throw std::runtime_error(
+        "StorageManager is not initialized in Orchestrator.");
+  }
+
+  // Placeholder for actual call to IStorageManager.
+  // This signature for storage_manager_->LoadIndexContents is illustrative.
+  // It would need to populate graph_entry_point_ptr_, graph_entry_point_rowid_,
+  // delete_queue_head_ptr_, and potentially update config_ and graph_manager_.
+  storage_manager_->LoadIndexContents(
+      index_path, config_,
+      graph_manager_.get(), // or however graph data is passed
+      graph_entry_point_ptr_, graph_entry_point_rowid_, delete_queue_head_ptr_);
+
+  this->index_path_ = index_path;
+  this->index_loaded_ = true;
+  this->is_dirty_ = false; // Crucial: A freshly loaded index is not dirty
+  std::cout << "Orchestrator: Index loaded successfully from " << index_path
+            << std::endl;
 }
 
 void Orchestrator::SaveIndex(const std::string &index_path) {
@@ -135,6 +303,116 @@ void Orchestrator::SaveIndex(const std::string &index_path) {
   // 1. Use StorageManager to save the current graph and metadata to disk.
   // 2. Ensure any pending shadow operations are flushed/committed via
   // IShadowStorageService.
+}
+
+void Orchestrator::InitializeIndex(idx_t estimated_cardinality) {
+  std::cout
+      << "Orchestrator: InitializeIndex called with estimated_cardinality: "
+      << estimated_cardinality << std::endl;
+  if (!storage_manager_ || !graph_manager_) {
+    throw std::runtime_error(
+        "Orchestrator: Managers not initialized for InitializeIndex.");
+  }
+  // 1. Initialize IndexConfig (if not already done or if it needs defaults for
+  // a new index)
+  //    - config_ should be usable here.
+
+  // 2. Tell StorageManager to prepare for a new index at index_path_ (if path
+  // is known)
+  //    or get a new storage location. For now, assume index_path_ might be set
+  //    from config or externally. This might involve creating metadata files.
+  //    storage_manager_->InitializeNewStorage(index_path_, config_);
+
+  // 3. Tell GraphManager to set up an empty graph structure based on config.
+  //    graph_manager_->InitializeEmptyGraph(config_, graph_entry_point_ptr_,
+  //    graph_entry_point_rowid_); The entry point for an empty graph might be
+  //    null/invalid.
+
+  // 4. Set delete queue head to an empty state.
+  //    delete_queue_head_ptr_ =  ... // some null/empty representation
+
+  // 5. Set internal state
+  // this->index_path_ = ... // determined by storage_manager_ or config
+  this->index_loaded_ = true; // Index is now 'loaded' in an empty state
+  this->is_dirty_ = true; // New index, needs to be saved if anything is added
+  std::cout << "Orchestrator: New index initialized." << std::endl;
+}
+
+void Orchestrator::HandleCommitDrop() {
+  std::cout << "Orchestrator: HandleCommitDrop called." << std::endl;
+  // Instruct managers to clean up their state related to this index instance
+  if (graph_manager_) {
+    graph_manager_->Reset();
+  }
+  if (storage_manager_) {
+    // StorageManager might need to clean up memory, close files,
+    // or potentially delete storage artifacts if appropriate here.
+    // Adding a Reset or similar method to IStorageManager might be needed.
+    // For now, assume it doesn't hold state needing reset, or Reset is part of
+    // its destructor. storage_manager_->Reset();
+  }
+  if (searcher_) {
+    // Searcher might also have state to reset.
+    // searcher_->Reset();
+  }
+  if (shadow_storage_service_) {
+    // Shadow service might need to discard pending changes or clean up.
+    // shadow_storage_service_->RollbackChanges(); // Or similar
+  }
+
+  // Reset Orchestrator's own state
+  index_loaded_ = false;
+  is_dirty_ = false;
+  index_path_.clear();
+  graph_entry_point_ptr_
+      .Invalidate(); // Assuming IndexPointer has Invalidate or Clear
+  graph_entry_point_rowid_ = -1;
+  delete_queue_head_ptr_
+      .Invalidate(); // Assuming IndexPointer has Invalidate or Clear
+
+  // The unique_ptrs to managers will be destroyed when Orchestrator is
+  // destroyed.
+}
+
+void Orchestrator::PerformVacuum() {
+  std::cout << "Orchestrator: PerformVacuum called." << std::endl;
+  if (!storage_manager_) {
+    throw std::runtime_error(
+        "StorageManager not initialized in Orchestrator::PerformVacuum");
+  }
+  try {
+    // Delegate processing the delete queue to the storage manager
+    storage_manager_->ProcessDeletionQueue(delete_queue_head_ptr_);
+    // After processing, the index state might have changed significantly
+    SetDirty(true); // Mark as dirty if vacuum modifies state that needs saving
+  } catch (const std::exception &e) {
+    std::cerr << "Orchestrator: Error during PerformVacuum: " << e.what()
+              << std::endl;
+    // Handle or re-throw
+    throw;
+  }
+}
+
+common::idx_t Orchestrator::GetInMemorySize() const {
+  common::idx_t total_size = sizeof(*this);
+  // Add size of config_ itself. If LmDiskannConfig contains dynamic members
+  // (e.g. std::string path), a more accurate GetInMemorySize() would be needed
+  // for LmDiskannConfig.
+  total_size +=
+      sizeof(config_); // Placeholder for actual config size contribution
+
+  if (graph_manager_) {
+    total_size += graph_manager_->GetInMemorySize();
+  }
+  if (storage_manager_) {
+    total_size += storage_manager_->GetInMemorySize();
+  }
+  if (searcher_) {
+    total_size += searcher_->GetInMemorySize();
+  }
+  // IShadowStorageService typically wouldn't hold large data in memory itself,
+  // but if it did, it would need GetInMemorySize too.
+  return total_size;
 }
 
 } // namespace core

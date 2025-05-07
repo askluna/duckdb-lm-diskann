@@ -17,10 +17,15 @@
 #include "duckdb/storage/table_io_manager.hpp"
 
 // Include headers for the refactored components
-#include "GraphManager.hpp"       // New component
-#include "GraphOperations.hpp"    // New component
-#include "LmDiskannScanState.hpp" // For scan state definition
-#include "index_config.hpp"       // Include the new config header
+#include "../core/GraphManager.hpp"
+#include "../core/GraphOperations.hpp"
+#include "../core/Orchestrator.hpp"
+#include "../core/index_config.hpp"
+#include "LmDiskannScanState.hpp"
+
+// Add these for the ParseOptions method
+#include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/types/value.hpp"
 
 #include <map>    // Using std::map for in-memory RowID mapping for now
 #include <memory> // For unique_ptr
@@ -173,31 +178,86 @@ public:
   ::duckdb::AttachedDatabase &GetAttachedDatabase() const {
     return db_state_.db;
   }
-  /** @brief Get the fixed size allocator reference. */
+  /** @brief Get the fixed size allocator reference (via Orchestrator ->
+   * GraphManager). */
   ::duckdb::FixedSizeAllocator &GetAllocator() {
-    return node_manager_->GetAllocator();
+    if (!orchestrator_ || !orchestrator_->GetGraphManager())
+      throw ::duckdb::InternalException(
+          "Orchestrator or GraphManager not initialized in GetAllocator");
+    // NOTE: IGraphManager might not expose GetAllocator directly.
+    // This depends on the final IGraphManager design. Assuming GraphManager
+    // concrete class has it for now. This might require casting or a different
+    // way to access the allocator if strictly using interface. For now, comment
+    // out or assume a way exists. return
+    // orchestrator_->GetGraphManager()->GetAllocator();
+    throw ::duckdb::NotImplementedException(
+        "GetAllocator via Orchestrator TBD");
   }
-  /** @brief Get the calculated node layout offsets. */
-  const core::NodeLayoutOffsets &GetNodeLayout() const { return node_layout_; }
-  /** @brief Get the vector dimensions. */
-  idx_t GetDimensions() const { return config_.dimensions; }
-  /** @brief Get the size of the compressed ternary edge representation. */
+  /** @brief Get the calculated node layout offsets (via Orchestrator ->
+   * Config). */
+  const core::NodeLayoutOffsets &GetNodeLayout() const {
+    if (!orchestrator_)
+      throw ::duckdb::InternalException(
+          "Orchestrator not initialized in GetNodeLayout");
+    // NodeLayoutOffsets might be part of config or calculated/held by
+    // GraphManager or Orchestrator itself. Assuming Orchestrator::GetConfig()
+    // provides access or it needs another accessor. return
+    // orchestrator_->GetConfig().node_layout; // If config holds it For now,
+    // let's assume it needs calculation based on config.
+    return CalculateLayoutInternal(
+        orchestrator_
+            ->GetConfig()); // Re-calculate based on orchestrator's config
+  }
+  /** @brief Get the vector dimensions (via Orchestrator -> Config). */
+  idx_t GetDimensions() const {
+    if (!orchestrator_)
+      throw ::duckdb::InternalException(
+          "Orchestrator not initialized in GetDimensions");
+    return orchestrator_->GetConfig().dimensions;
+  }
+  /** @brief Get the size of the compressed ternary edge representation (via
+   * Orchestrator -> Config). */
   idx_t GetEdgeVectorSizeBytes() const {
-    return node_layout_.ternary_edge_size_bytes;
+    if (!orchestrator_)
+      throw ::duckdb::InternalException(
+          "Orchestrator not initialized in GetEdgeVectorSizeBytes");
+    // Recalculate based on orchestrator's config dimensions
+    return core::GetTernaryEdgeSizeBytes(orchestrator_->GetConfig().dimensions);
   }
-  /** @brief Get the distance metric type. */
+  /** @brief Get the distance metric type (via Orchestrator -> Config). */
   core::LmDiskannMetricType GetMetricType() const {
-    return config_.metric_type;
+    if (!orchestrator_)
+      throw ::duckdb::InternalException(
+          "Orchestrator not initialized in GetMetricType");
+    return orchestrator_->GetConfig().metric_type;
   }
-  /** @brief Get the max neighbor degree (R). */
-  uint32_t GetR() const { return config_.r; }
-  /** @brief Get the alpha parameter for pruning. */
-  float GetAlpha() const { return config_.alpha; }
-  /** @brief Get the search list size. */
-  uint32_t GetLSearch() const { return config_.l_search; }
-  /** @brief Get the node vector type. */
+  /** @brief Get the max neighbor degree (R) (via Orchestrator -> Config). */
+  uint32_t GetR() const {
+    if (!orchestrator_)
+      throw ::duckdb::InternalException("Orchestrator not initialized in GetR");
+    return orchestrator_->GetConfig().r;
+  }
+  /** @brief Get the alpha parameter for pruning (via Orchestrator -> Config).
+   */
+  float GetAlpha() const {
+    if (!orchestrator_)
+      throw ::duckdb::InternalException(
+          "Orchestrator not initialized in GetAlpha");
+    return orchestrator_->GetConfig().alpha;
+  }
+  /** @brief Get the search list size (via Orchestrator -> Config). */
+  uint32_t GetLSearch() const {
+    if (!orchestrator_)
+      throw ::duckdb::InternalException(
+          "Orchestrator not initialized in GetLSearch");
+    return orchestrator_->GetConfig().l_search;
+  }
+  /** @brief Get the node vector type (via Orchestrator -> Config). */
   core::LmDiskannVectorType GetNodeVectorType() const {
-    return config_.node_vector_type;
+    if (!orchestrator_)
+      throw ::duckdb::InternalException(
+          "Orchestrator not initialized in GetNodeVectorType");
+    return orchestrator_->GetConfig().node_vector_type;
   }
 
   // --- New Public Methods for GraphOperations --- //
@@ -231,17 +291,16 @@ private:
                             bool find_exact_distances);
 
   // --- Core Parameters (Held in Config Struct) --- //
-  /** @brief Parsed and validated configuration parameters. */
-  core::LmDiskannConfig config_;
-  /** @brief Calculated layout based on config. */
-  core::NodeLayoutOffsets node_layout_;
-  /** @brief Final aligned size of each node's block on disk. */
-  idx_t block_size_bytes_;
+  // /** @brief Parsed and validated configuration parameters. */
+  // core::LmDiskannConfig config_; // Orchestrator manages config
+  // /** @brief Calculated layout based on config. */
+  // core::NodeLayoutOffsets node_layout_; // Orchestrator or its managers
+  // handle this
+  // /** @brief Final aligned size of each node's block on disk. */
+  // idx_t block_size_bytes_; // Orchestrator or its managers handle this
 
   // --- DuckDB Integration State (subset of original) ---
-  /** @brief Holds DB reference, IO manager, and indexed column type. */
-  LmDiskannDBState db_state_; // Will be DbIntegrationState later
-
+  LmDiskannDBState db_state_;
   /** @brief Path to the index-specific data directory (e.g.,
    * [db_name].lmd_idx/[index_name]/) */
   ::duckdb::string index_data_path_;
@@ -249,24 +308,29 @@ private:
   /** @brief Internal format version (for metadata check). */
   uint8_t format_version_;
 
-  // --- NEW COMPONENT INSTANCES --- //
-  /** @brief Manages node allocation, RowID mapping, and raw data access. */
-  ::duckdb::unique_ptr<core::GraphManager> node_manager_;
-  /** @brief Manages graph algorithms, structure, and entry point. */
-  ::duckdb::unique_ptr<core::GraphOperations> graph_operations_;
+  // --- Core LM-DiskANN Components (Refactored) --- //
+  // ::duckdb::unique_ptr<core::GraphManager> node_manager_; // Orchestrator has
+  // graph_manager_
+  // ::duckdb::unique_ptr<core::GraphOperations> graph_operations_; // Logic
+  // moved into GraphManager/Searcher/Orchestrator
 
-  // --- Delete Queue --- //
-  /** @brief Pointer to the head of the delete queue linked list. */
-  ::duckdb::IndexPointer delete_queue_head_ptr_;
+  // --- Graph State (Now managed by Orchestrator or its components) --- //
+  // ::duckdb::IndexPointer graph_entry_point_ptr_; // Orchestrator manages this
+  // state
+  // ::duckdb::row_t graph_entry_point_rowid_;      // Orchestrator manages this
+  // state
+  // ::duckdb::IndexPointer delete_queue_head_ptr_; // Orchestrator manages this
+  // state bool is_dirty_ = false; // Orchestrator manages this flag
 
-  /** @brief Tracks if changes need persisting. */
-  bool is_dirty_ = false;
+  std::unique_ptr<core::Orchestrator> orchestrator_; // Orchestrator instance
 
   // --- Helper Methods (Private to LmDiskannIndex) ---
-  /** @brief Initializes structures for a new, empty index. */
   void InitializeNewIndex(idx_t estimated_cardinality);
-  /** @brief Loads index metadata and state from existing storage info. */
-  void LoadFromStorage(const ::duckdb::IndexStorageInfo &storage_info);
+  void LoadFromStorage(const ::duckdb::IndexStorageInfo
+                           &storage_info); // Keep declaration if called by
+                                           // constructor path indirectly
+  core::LmDiskannConfig ParseOptions(
+      const ::duckdb::case_insensitive_map_t<::duckdb::Value> &options);
 
   // --- Original Private Distance/Conversion Helpers (to be wrapped or moved)
   // --- //

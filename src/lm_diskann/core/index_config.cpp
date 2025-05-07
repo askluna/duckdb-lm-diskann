@@ -8,12 +8,10 @@
 
 // #include "duckdb/parser/binder/binder_exception.hpp" // Removed: File not
 // found
-#include "duckdb/common/case_insensitive_map.hpp" // Needed for ParseOptions
-#include "duckdb/common/exception.hpp"            // Using base exception
-#include "duckdb/common/helper.hpp"               // For AlignValue
-#include "duckdb/common/limits.hpp"               // For NumericLimits
+#include "duckdb/common/exception.hpp" // Using base exception
+#include "duckdb/common/helper.hpp"    // For AlignValue
+#include "duckdb/common/limits.hpp"    // For NumericLimits
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/common/types/value.hpp"   // Needed for ParseOptions
 #include "duckdb/storage/storage_info.hpp" // For Storage::SECTOR_SIZE
 
 #include <algorithm> // For std::min, std::max
@@ -27,17 +25,17 @@ namespace core {
 // --- Node Block Layout Constants (Keep definitions here if only used
 // internally in cpp) --- Offset of the neighbor count field within the node
 // block.
-constexpr idx_t OFFSET_NEIGHBOR_COUNT = 0; // uint16_t
+constexpr common::idx_t OFFSET_NEIGHBOR_COUNT = 0; // uint16_t
 // Alignment requirement for node vectors within the block.
-constexpr idx_t NODE_VECTOR_ALIGNMENT = 8;
+constexpr common::idx_t NODE_VECTOR_ALIGNMENT = 8;
 // Alignment requirement for ternary plane arrays within the block.
-constexpr idx_t PLANE_ALIGNMENT = 8;
-constexpr idx_t DISKANN_MAX_BLOCK_SZ =
+constexpr common::idx_t PLANE_ALIGNMENT = 8;
+constexpr common::idx_t DISKANN_MAX_BLOCK_SZ =
     128 * 1024 * 1024; // Max allowed block size
 
 // --- Configuration Functions --- //
 
-idx_t GetVectorTypeSizeBytes(LmDiskannVectorType type) {
+common::idx_t GetVectorTypeSizeBytes(LmDiskannVectorType type) {
   switch (type) {
   case LmDiskannVectorType::FLOAT32:
     return sizeof(float);
@@ -53,7 +51,7 @@ idx_t GetVectorTypeSizeBytes(LmDiskannVectorType type) {
 // Calculates the byte size for *one* ternary plane (pos or neg) for one
 // neighbor. Equivalent to ceil(dims / 64.0) * sizeof(uint64_t) Note: This uses
 // the helper from ternary_quantization.hpp
-idx_t GetTernaryPlaneSizeBytes(idx_t dimensions) {
+common::idx_t GetTernaryPlaneSizeBytes(common::idx_t dimensions) {
   if (dimensions == 0) {
     throw ::duckdb::InternalException(
         "Cannot calculate plane size for 0 dimensions");
@@ -61,57 +59,8 @@ idx_t GetTernaryPlaneSizeBytes(idx_t dimensions) {
   return WordsPerPlane(dimensions) * sizeof(uint64_t);
 }
 
-idx_t GetTernaryEdgeSizeBytes(idx_t dimensions) {
+common::idx_t GetTernaryEdgeSizeBytes(common::idx_t dimensions) {
   return 2 * GetTernaryPlaneSizeBytes(dimensions);
-}
-
-LmDiskannConfig
-ParseOptions(const ::duckdb::case_insensitive_map_t<::duckdb::Value> &options) {
-  LmDiskannConfig config; // Starts with default values
-
-  for (const auto &entry : options) {
-    const ::duckdb::string &key_upper =
-        ::duckdb::StringUtil::Upper(entry.first);
-    const ::duckdb::Value &val = entry.second;
-
-    if (key_upper == LmDiskannOptionKeys::METRIC) {
-      ::duckdb::string metric_str = ::duckdb::StringUtil::Upper(val.ToString());
-      if (metric_str == "L2") {
-        config.metric_type = LmDiskannMetricType::L2;
-      } else if (metric_str == "COSINE") {
-        config.metric_type = LmDiskannMetricType::COSINE;
-      } else if (metric_str == "IP") {
-        config.metric_type = LmDiskannMetricType::IP;
-      } else {
-        throw ::duckdb::Exception(
-            ::duckdb::ExceptionType::INVALID_INPUT,
-            ::duckdb::StringUtil::Format("Unsupported METRIC type '%s' for "
-                                         "LM_DISKANN index. Supported types: "
-                                         "L2, COSINE, IP",
-                                         metric_str));
-      }
-    } else if (key_upper == LmDiskannOptionKeys::R) {
-      config.r = val.GetValue<uint32_t>();
-    } else if (key_upper == LmDiskannOptionKeys::L_INSERT) {
-      config.l_insert = val.GetValue<uint32_t>();
-    } else if (key_upper == LmDiskannOptionKeys::ALPHA) {
-      config.alpha = val.GetValue<float>();
-    } else if (key_upper == LmDiskannOptionKeys::L_SEARCH) {
-      config.l_search = val.GetValue<uint32_t>();
-    } else {
-      // Error on unknown option - helps catch typos
-      throw ::duckdb::Exception(
-          ::duckdb::ExceptionType::INVALID_INPUT,
-          ::duckdb::StringUtil::Format(
-              "Unknown option '%s' for LM_DISKANN index. Allowed "
-              "options: METRIC, R, L_INSERT, ALPHA, L_SEARCH",
-              entry.first));
-    }
-    // NODE_TYPE and DIMENSIONS are derived from the column type later
-    // EDGE_TYPE is implicitly TERNARY
-  }
-
-  return config;
 }
 
 void ValidateParameters(const LmDiskannConfig &config) {
@@ -162,7 +111,7 @@ void ValidateParameters(const LmDiskannConfig &config) {
 
 NodeLayoutOffsets CalculateLayoutInternal(const LmDiskannConfig &config) {
   NodeLayoutOffsets layout;
-  idx_t current_offset = 0;
+  common::idx_t current_offset = 0;
 
   // Ensure required config members needed for layout are set
   if (config.dimensions == 0 ||
@@ -172,7 +121,7 @@ NodeLayoutOffsets CalculateLayoutInternal(const LmDiskannConfig &config) {
         "node_vector_type to be set in config");
   }
 
-  idx_t node_vector_size_bytes =
+  common::idx_t node_vector_size_bytes =
       GetVectorTypeSizeBytes(config.node_vector_type) * config.dimensions;
 
   // Offset 0: Neighbor count (uint16_t)
@@ -180,32 +129,34 @@ NodeLayoutOffsets CalculateLayoutInternal(const LmDiskannConfig &config) {
   current_offset = sizeof(uint16_t);
 
   // Align for node vector
-  current_offset =
-      ::duckdb::AlignValue<idx_t, NODE_VECTOR_ALIGNMENT>(current_offset);
+  current_offset = ::duckdb::AlignValue<common::idx_t, NODE_VECTOR_ALIGNMENT>(
+      current_offset);
   layout.node_vector_offset = current_offset;
   current_offset += node_vector_size_bytes;
 
   // Align for neighbor IDs (row_t is usually 64-bit, likely already aligned but
   // enforce)
-  current_offset =
-      ::duckdb::AlignValue<idx_t, sizeof(::duckdb::row_t)>(current_offset);
+  current_offset = ::duckdb::AlignValue<common::idx_t, sizeof(::duckdb::row_t)>(
+      current_offset);
   layout.neighbor_ids_offset = current_offset;
   current_offset += config.r * sizeof(::duckdb::row_t);
 
   // Calculate size of compressed TERNARY edge representation for ONE neighbor
   layout.ternary_edge_size_bytes = GetTernaryEdgeSizeBytes(config.dimensions);
-  idx_t plane_size_bytes_per_neighbor =
+  common::idx_t plane_size_bytes_per_neighbor =
       GetTernaryPlaneSizeBytes(config.dimensions);
 
   // Align for positive planes array
-  current_offset = ::duckdb::AlignValue<idx_t, PLANE_ALIGNMENT>(current_offset);
+  current_offset =
+      ::duckdb::AlignValue<common::idx_t, PLANE_ALIGNMENT>(current_offset);
   layout.neighbor_pos_planes_offset = current_offset;
   current_offset +=
       config.r *
       plane_size_bytes_per_neighbor; // Total size for all positive planes
 
   // Align for negative planes array
-  current_offset = ::duckdb::AlignValue<idx_t, PLANE_ALIGNMENT>(current_offset);
+  current_offset =
+      ::duckdb::AlignValue<common::idx_t, PLANE_ALIGNMENT>(current_offset);
   layout.neighbor_neg_planes_offset = current_offset;
   current_offset +=
       config.r *

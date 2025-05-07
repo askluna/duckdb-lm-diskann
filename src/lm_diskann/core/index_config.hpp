@@ -5,14 +5,9 @@
  */
 #pragma once
 
-#include "duckdb.hpp"
-#include "duckdb/common/case_insensitive_map.hpp"
-#include "duckdb/common/enums/vector_type.hpp"
-#include "duckdb/common/types.hpp"
-#include "duckdb/common/types/value.hpp"
-#include "duckdb/execution/index/index_pointer.hpp"
+#include "../common/types.hpp" // Should provide common::idx_t, common::row_t, common::IndexPointer
 
-#include <cstdint>
+#include <cstdint> // For uint8_t, uint32_t etc.
 #include <string>
 
 namespace diskann {
@@ -89,11 +84,12 @@ struct LmDiskannConfig {
       LmDiskannConfigDefaults::L_SEARCH; // Size of the candidate list during
                                          // search (L_search).
 
-  idx_t dimensions =
+  common::idx_t dimensions =
       0; // Dimensionality of the vectors. Derived from column type.
   LmDiskannVectorType node_vector_type =
       LmDiskannVectorType::UNKNOWN; // Data type of the node vectors. Derived
                                     // from column type.
+  std::string path;                 // Path to the index data directory on disk.
 };
 
 // --- Struct to hold calculated layout offsets --- //
@@ -104,19 +100,19 @@ struct LmDiskannConfig {
  * accessors.
  */
 struct NodeLayoutOffsets {
-  idx_t neighbor_count_offset =
+  common::idx_t neighbor_count_offset =
       0; // Offset of the neighbor count (uint16_t) - Typically 0
-  idx_t node_vector_offset =
+  common::idx_t node_vector_offset =
       0; // Offset of the start of the node's full vector data
-  idx_t neighbor_ids_offset =
+  common::idx_t neighbor_ids_offset =
       0; // Offset of the start of the neighbor row_t array
-  idx_t neighbor_pos_planes_offset =
+  common::idx_t neighbor_pos_planes_offset =
       0; // Offset of the start of the positive ternary planes array
-  idx_t neighbor_neg_planes_offset =
+  common::idx_t neighbor_neg_planes_offset =
       0; // Offset of the start of the negative ternary planes array
-  idx_t total_node_size = 0; // Total size *before* final block alignment (used
-                             // for allocation/memcpy)
-  idx_t ternary_edge_size_bytes =
+  common::idx_t total_node_size = 0; // Total size *before* final block
+                                     // alignment (used for allocation/memcpy)
+  common::idx_t ternary_edge_size_bytes =
       0; // Calculated size of one neighbor's compressed ternary representation
 };
 
@@ -124,12 +120,13 @@ struct NodeLayoutOffsets {
  * @brief Non-owning view of constant ternary bit planes.
  */
 struct TernaryPlanesView {
-  ::duckdb::const_data_ptr_t positive_plane =
+  const unsigned char *positive_plane =
       nullptr; // Pointer to the positive plane data.
-  ::duckdb::const_data_ptr_t negative_plane =
-      nullptr;          // Pointer to the negative plane data.
-  idx_t dimensions = 0; // Dimensionality of the vector these planes represent.
-  idx_t words_per_plane =
+  const unsigned char *negative_plane =
+      nullptr; // Pointer to the negative plane data.
+  common::idx_t dimensions =
+      0; // Dimensionality of the vector these planes represent.
+  common::idx_t words_per_plane =
       0; // Pre-calculated size (in uint64_t words) based on dimensions.
 
   /**
@@ -146,12 +143,13 @@ struct TernaryPlanesView {
  * @brief Non-owning view of mutable ternary bit planes.
  */
 struct MutableTernaryPlanesView {
-  ::duckdb::data_ptr_t positive_plane =
+  unsigned char *positive_plane =
       nullptr; // Pointer to the mutable positive plane data.
-  ::duckdb::data_ptr_t negative_plane =
-      nullptr;          // Pointer to the mutable negative plane data.
-  idx_t dimensions = 0; // Dimensionality of the vector these planes represent.
-  idx_t words_per_plane =
+  unsigned char *negative_plane =
+      nullptr; // Pointer to the mutable negative plane data.
+  common::idx_t dimensions =
+      0; // Dimensionality of the vector these planes represent.
+  common::idx_t words_per_plane =
       0; // Pre-calculated size (in uint64_t words) based on dimensions.
 
   /**
@@ -192,15 +190,6 @@ struct TernaryPlaneBatchView {
 // --- Configuration Functions --- //
 
 /**
- * @brief Parses index options from the WITH clause into a config struct.
- * @param options Map of option keys to values from CREATE INDEX.
- * @return LmDiskannConfig struct populated with parsed or default values.
- * @throws Exception if an unknown option is provided.
- */
-LmDiskannConfig
-ParseOptions(const ::duckdb::case_insensitive_map_t<::duckdb::Value> &options);
-
-/**
  * @brief Validates the combination of parameters within the config struct.
  * @param config The configuration struct to validate.
  * @throws Exception if validation fails (e.g., required parameters unset,
@@ -214,7 +203,7 @@ void ValidateParameters(const LmDiskannConfig &config);
  * @return Size in bytes.
  * @throws InternalException for unsupported types.
  */
-idx_t GetVectorTypeSizeBytes(LmDiskannVectorType type);
+common::idx_t GetVectorTypeSizeBytes(LmDiskannVectorType type);
 
 /**
  * @brief Gets the size in bytes for *one* compressed ternary plane (pos or neg)
@@ -223,7 +212,16 @@ idx_t GetVectorTypeSizeBytes(LmDiskannVectorType type);
  * @return Size in bytes.
  * @throws InternalException if dimensions is 0.
  */
-idx_t GetTernaryPlaneSizeBytes(idx_t dimensions);
+common::idx_t GetTernaryPlaneSizeBytes(common::idx_t dimensions);
+
+/**
+ * @brief Gets the size in bytes for *one* compressed ternary edge for one
+ * neighbor.
+ * @param dimensions The vector dimensionality.
+ * @return Size in bytes.
+ * @throws InternalException if dimensions is 0.
+ */
+common::idx_t GetTernaryEdgeSizeBytes(common::idx_t dimensions);
 
 /**
  * @brief Calculates the internal layout offsets within a node block based on
@@ -257,15 +255,14 @@ struct LmDiskannMetadata {
   LmDiskannVectorType node_vector_type =
       LmDiskannVectorType::UNKNOWN; // Type of vectors stored in nodes
   // Edge type is implicitly Ternary, no need to store explicitly
-  idx_t dimensions = 0;       // Vector dimensionality
-  uint32_t r = 0;             // Max neighbors per node (graph degree)
-  uint32_t l_insert = 0;      // Search list size during insertion
-  float alpha = 0.0f;         // Pruning factor during insertion
-  uint32_t l_search = 0;      // Search list size during query
-  idx_t block_size_bytes = 0; // Size of each node block on disk
-  ::duckdb::IndexPointer
-      graph_entry_point_ptr; // Pointer to the entry node block
-  ::duckdb::IndexPointer
+  common::idx_t dimensions = 0;       // Vector dimensionality
+  uint32_t r = 0;                     // Max neighbors per node (graph degree)
+  uint32_t l_insert = 0;              // Search list size during insertion
+  float alpha = 0.0f;                 // Pruning factor during insertion
+  uint32_t l_search = 0;              // Search list size during query
+  common::idx_t block_size_bytes = 0; // Size of each node block on disk
+  common::IndexPointer graph_entry_point_ptr; // Pointer to the entry node block
+  common::IndexPointer
       delete_queue_head_ptr; // Pointer to the head of the delete queue block
   // IndexPointer rowid_map_root_ptr; // TODO: Add when ART is integrated
 };
