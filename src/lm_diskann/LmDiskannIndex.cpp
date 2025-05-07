@@ -11,9 +11,9 @@
 #include "GraphManager.hpp"    // New
 #include "GraphOperations.hpp" // New
 #include "LmDiskannScanState.hpp"
+#include "Searcher.hpp" // For PerformSearch
 #include "distance.hpp" // For distance/conversion functions
 #include "index_config.hpp"
-#include "search.hpp"          // For PerformSearch
 #include "storage_manager.hpp" // For Load/PersistMetadata, GetEntryPointRowId etc.
 
 // Include necessary DuckDB headers used in this file

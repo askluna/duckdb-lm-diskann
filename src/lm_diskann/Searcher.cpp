@@ -1,4 +1,4 @@
-#include "search.hpp"
+#include "Searcher.hpp"
 #include "LmDiskannIndex.hpp"     // Include main index header
 #include "LmDiskannScanState.hpp" // For LmDiskannScanState
 #include "distance.hpp" // For ComputeExactDistanceFloat, ComputeApproxSimilarityTernary
@@ -29,10 +29,12 @@ using CandidateQueue =
     std::priority_queue<CandidateNode, std::vector<CandidateNode>,
                         std::greater<CandidateNode>>;
 
+using candidate_pair_t = std::pair<float, ::duckdb::row_t>;
+
 // --- Search Helper Implementation --- //
 
 // Helper to calculate plane size bytes
-inline idx_t GetPlaneSizeBytes(const LmDiskannIndex &index) {
+inline idx_t GetPlaneSizeBytes(const ::diskann::duckdb::LmDiskannIndex &index) {
   // Use public getter instead of accessing private member
   idx_t dimensions = index.GetDimensions(); // Assuming this getter exists
   if (dimensions == 0) {
@@ -42,14 +44,15 @@ inline idx_t GetPlaneSizeBytes(const LmDiskannIndex &index) {
   return GetTernaryPlaneSizeBytes(dimensions);
 }
 
-void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
+void PerformSearch(::duckdb::LmDiskannScanState &scan_state,
+                   ::diskann::duckdb::LmDiskannIndex &index,
                    const LmDiskannConfig &config, bool find_exact_distances) {
   // Max-heap for candidates (stores {distance, node_id}) - we want smallest
   // distance = highest priority So we store {-distance, node_id} or use
   // std::greater
-  using candidate_pair_t = std::pair<float, ::duckdb::row_t>;
   std::priority_queue<candidate_pair_t> candidate_pqueue; // Max-heap
 
+  // TODO: Implement entry point initialization
   // 1. Initialize with Entry Point(s)
   // Access private helpers via friend status or make them public/internal
   // helpers? Assuming friend access is okay for now.
@@ -58,7 +61,8 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
       ::duckdb::NumericLimits<::duckdb::row_t>::Maximum()) {
     // No entry point, index is empty or deleted entry not replaced
     // Ensure scan_state.candidates is empty (it should be initially)
-    // std::priority_queue<candidate_pair_t>().swap(scan_state.candidates); //
+    // std::priority_queue<candidate_pair_t>().swap(scan_state.candidates);
+    //
     // Clear if needed
     return; // No search possible
   }
@@ -94,16 +98,18 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
         query_float_vec.data(), entry_node_float_vec.data(), config.dimensions,
         config.metric_type);
 
-    // Use negative distance for max-heap behavior (closest is highest priority)
-    candidate_pqueue.push({-exact_entry_dist, entry_point_rowid});
-    scan_state.visited.insert(entry_point_rowid);
-
+    // Use negative distance for max-heap behavior (closest is highest
+      priority) candidate_pqueue.push({-exact_entry_dist,
+      entry_point_rowid});
+      scan_state.visited.insert(entry_point_rowid);
   } catch (const std::exception &e) {
     ::duckdb::Printer::Print(::duckdb::StringUtil::Format(
         "Warning: Failed to process entry point %lld: %s", entry_point_rowid,
         e.what()));
-    // Ensure scan_state.candidates is empty
-    // std::priority_queue<candidate_pair_t>().swap(scan_state.candidates);
+    Ensure scan_state
+        .candidates is empty
+        std::priority_queue<candidate_pair_t>()
+        .swap(scan_state.candidates);
     return;
   }
 
@@ -192,7 +198,7 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
         }
       }
     } catch (const std::exception &e) {
-      Printer::Print(StringUtil::Format(
+      ::duckdb::Printer::Print(::duckdb::StringUtil::Format(
           "Warning: Error processing node %lld during search: %s",
           current_rowid, e.what()));
       continue;
@@ -207,19 +213,19 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
     // Re-rank the top_candidates using exact distances
     std::vector<candidate_pair_t> final_candidates; // Use {exact_dist, rowid}
     final_candidates.reserve(scan_state.top_candidates.size());
-    vector<float> node_float_vec(config.dimensions);
+    ::duckdb::vector<float> node_float_vec(config.dimensions);
 
     while (!scan_state.top_candidates.empty()) {
-      row_t cand_rowid = scan_state.top_candidates.top().second;
+      ::duckdb::row_t cand_rowid = scan_state.top_candidates.top().second;
       scan_state.top_candidates.pop();
 
-      IndexPointer cand_ptr;
+      ::duckdb::IndexPointer cand_ptr;
       try {
         if (!index.TryGetNodePointer(cand_rowid, cand_ptr))
           continue;
         auto cand_handle = index.GetNodeBuffer(cand_ptr);
         auto cand_block = cand_handle.Ptr();
-        const_data_ptr_t cand_raw_vec =
+        ::duckdb::const_data_ptr_t cand_raw_vec =
             NodeAccessors::GetNodeVector(cand_block, index.GetNodeLayout());
 
         index.ConvertNodeVectorToFloat(cand_raw_vec, node_float_vec.data());
@@ -230,9 +236,9 @@ void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
         final_candidates.push_back({exact_dist, cand_rowid});
 
       } catch (const std::exception &e) {
-        Printer::Print(
-            StringUtil::Format("Warning: Failed to re-rank candidate %lld: %s",
-                               cand_rowid, e.what()));
+        ::duckdb::Printer::Print(::duckdb::StringUtil::Format(
+            "Warning: Failed to re-rank candidate %lld: %s", cand_rowid,
+            e.what()));
       }
     }
 

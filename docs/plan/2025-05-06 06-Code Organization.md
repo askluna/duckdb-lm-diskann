@@ -1,113 +1,116 @@
-## Formalized DiskANN C++ Architectural Specification for DuckDB Extension Integration
+## DiskANN DuckDB Extension: C++ Architectural Specification
 
-This document presents a formalized C++ architectural specification for the DiskANN DuckDB extension. The proposed structure is centered upon an `Orchestrator` class, situated within the `diskann` namespace, which is tasked with the management of core indexing logic. This design paradigm is intended to promote modularity, enhance testability, and ensure maintainability. The present revision simplifies the namespace structure to `duckdb` (for DuckDB interface components) and `diskann` (for core logic and common types), and adopts PascalCase for filenames primarily defining classes. It is important to note that placing extension-specific components directly within the `duckdb` namespace, while simplifying naming, carries an inherent risk of naming collisions with current or future core DuckDB components. This specification otherwise incorporates considerations pertaining to nomenclature, directory organization, and offers detailed recommendations for class design, the application of functional programming paradigms, and adherence to C++20 best practices.
+Version: 1.1
+
+Date: 2025-05-07
+
+**Abstract:** This document specifies the C++ architecture for the DiskANN DuckDB extension. The design prioritizes modularity, testability, and maintainability, centering on an `Orchestrator` class within the `diskann` namespace for core indexing logic. This specification details a two-namespace structure (`duckdb` for DuckDB interface components; `diskann` for core logic and common types), PascalCase for class-defining filenames, and explicit characterization of components regarding state, purity, immutability, and callback usage. Direct use of the `duckdb` namespace for extension-specific interface components, while simplifying naming, introduces a potential risk of naming collisions with core DuckDB components; this risk is acknowledged. Vector quantization (e.g., ternary quantization) is handled by specific utility components within the `diskann` namespace as needed, rather than through a dedicated general quantizer interface at the orchestrator level.
 
 ### 1. Fundamental Design Principle: The `diskann::Orchestrator`
 
-The `diskann::Orchestrator` class constitutes the central architectural element. The DuckDB-specific `DiskannIndex` class (residing in the `duckdb` namespace), which inherits from DuckDB's `Index` base class, will assume the following responsibilities:
+The `diskann::Orchestrator` class is the central architectural component. It is instantiated and managed by the `duckdb::DiskannIndex` class, which serves as the primary integration point with the DuckDB system.
 
-- Implementation of the DuckDB `Index` interface, encompassing methods such as `Bind`, `InitializeScan`, `Scan`, `Append`, `Delete`, and `Verify`.
-- Interaction with DuckDB's systemic components, including the catalog, storage manager, buffer manager, and transaction manager.
-- Translation of DuckDB data structures and operational requests into a format comprehensible to the `diskann::Orchestrator`.
-- Management of the lifecycle pertaining to the `diskann::Orchestrator` instance associated with a given index.
+**1.1. `duckdb::DiskannIndex` Responsibilities:**
 
-The `diskann::Orchestrator` is designed to encapsulate the algorithmic logic of the DiskANN implementation:
+- Implementation of the DuckDB `Index` interface (e.g., `Bind`, `InitializeScan`, `Scan`, `Append`, `Delete`, `Verify`).
+- Interaction with DuckDB systemic components (catalog, storage, buffer manager, transaction manager).
+- Translation of DuckDB data structures and operational requests into invocations on the `diskann::Orchestrator`.
+- Lifecycle management of the associated `diskann::Orchestrator` instance.
 
-- **State Management:** It will possess ownership and control over the state of the DiskANN graph, including elements such as entry point(s), graph metadata, and configuration parameters. This remit extends to managing the file system paths for on-disk structures.
-- **Core Operations:** It will implement high-level operations, including index construction, search execution, new vector insertion, and the handling of deletions and updates. The latter may involve sophisticated mechanisms, such as those delineated in the "Shadow Implementation.md" document.
-- **Coordination:** It will delegate specific tasks to specialized components residing within the `diskann` namespace, such as `GraphManager`, `StorageManager`, and `Searcher`.
-- **Testability:** The `Orchestrator` is engineered for isolated testing, independent of the DuckDB environment. Its dependencies, for instance `diskann::IStorageManager`, will be injectable, thereby facilitating the use of mock objects and enabling focused unit and integration testing of the core Approximate Nearest Neighbor (ANN) algorithm.
+**1.2. `diskann::Orchestrator` Responsibilities:**
 
-### 2. Proposed Component Architecture and Functional Responsibilities
+- **State Management:** Owns and controls the DiskANN graph's state, including entry points, metadata, configuration parameters, and paths to on-disk structures. (Primarily **Stateful**).
+- **Core Operations:** Implements high-level operations: index construction, search execution, vector insertion, and data modification (deletions/updates), potentially utilizing mechanisms like a shadow store as detailed in auxiliary design documents.
+- **Coordination:** Delegates tasks to specialized components within the `diskann` namespace (e.g., `GraphManager`, `StorageManager`, `Searcher`).
+- **Testability:** Engineered for isolated testing. Dependencies (e.g., `diskann::IStorageManager`) are injected, enabling focused unit and integration testing of the core ANN algorithm using mock objects.
 
-#### Namespace Allocation:
+### 2. Component Architecture and Functional Responsibilities
 
-- `duckdb`: Designated for components that directly interface with the DuckDB system (e.g., `duckdb::DiskannIndex`).
-- `diskann`: Encompasses the core DiskANN algorithmic logic, shared data structures, and utility functions (e.g., `diskann::Orchestrator`, `diskann::Node`).
+#### 2.1. Namespace Allocation:
 
-#### Component Delineation:
+- `duckdb`: Designated for components directly interfacing with the DuckDB system (e.g., `duckdb::DiskannIndex`).
+- `diskann`: Encompasses core DiskANN algorithmic logic, shared data structures, and utility functions (e.g., `diskann::Orchestrator`, `diskann::Node`).
 
-- **`diskann/duckdb/` (Files within this directory will use `namespace duckdb { ... }`)**
-  - **`DiskannIndex.hpp`/`.cpp`:** (Class `DiskannIndex` in `duckdb` namespace)
-    - Serves as the primary interface to the DuckDB system.
-    - Manages DuckDB-specific tasks and data type conversions.
-    - Instantiates and invokes the `diskann::Orchestrator`, injecting its dependencies.
-    - Oversees DuckDB-specific index metadata and storage considerations.
-  - **`DiskannScanState.hpp`/`.cpp`:** (Class `DiskannScanState` in `duckdb` namespace)
-    - Manages state variables during a scan operation within the DuckDB context.
-  - **`DiskannBindData.hpp`/`.cpp`, `DiskannCreateIndexInfo.hpp`/`.cpp`:** (Structs/Classes like `DiskannBindData`, `DiskannCreateIndexInfo` in `duckdb` namespace)
-    - Custom data structures tailored for DuckDB's bind, create index, and other operational phases.
-  - **`diskann_extension.cpp`:** (Typically located at the `src/` level or a designated extension loading point)
-    - Handles DuckDB extension registration, definition of the index type, and associated functions or pragmas. (Classes/functions defined here for DuckDB registration might also be in the `duckdb` namespace or global namespace as per DuckDB extension guidelines).
-- **`diskann/core/` and `diskann/common/` (Files within these directories will use `namespace diskann { ... }`)**
-  - **`Orchestrator.hpp`/`.cpp`:** (Class `Orchestrator`, in `diskann` namespace)
-    - Functions as the central coordinator for all core DiskANN operations.
-    - Interacts with `diskann::IStorageManager`, `diskann::IGraphManager`, `diskann::ISearcher`, and `diskann::IndexConfig`.
-  - **`IndexConfig.hpp`/`.cpp`:** (Struct or Class `IndexConfig`, in `diskann` namespace)
-    - Stores all DiskANN operational parameters.
-  - **`distance.hpp`:** (Namespace `diskann::distance` containing functions, or a templated class/strategy pattern in `diskann` namespace)
-    - Provides a suite of distance functions.
-    - Illustrative example: `namespace diskann { namespace distance { template<typename T> T l2_squared(const T* vec1, const T* vec2, uint32_t dim); } }`
-  - **`IStorageManager.hpp`, `StorageManager.hpp`/`.cpp`:** (Interface `IStorageManager` and Class `StorageManager`, in `diskann` namespace)
-    - **Interface (`diskann::IStorageManager`):** Defines the contractual obligations for all disk input/output operations.
-    - **Class (`diskann::StorageManager`):** Provides the concrete implementation.
-    - Exemplar methods: `Initialize(base_path, config)`, `LoadMetadata() -> diskann::IndexConfig`, `SaveMetadata(const diskann::IndexConfig& config)`, `ReadNode(diskann::node_id_t node_id, diskann::StorageTier tier = diskann::StorageTier::MAIN) -> std::optional<diskann::Node>`, etc.
-  - **`IGraphManager.hpp`, `GraphManager.hpp`/`.cpp`:** (Interface `IGraphManager` and Class `GraphManager`, in `diskann` namespace)
-  - **`ISearcher.hpp`, `Searcher.hpp`/`.cpp`:** (Interface `ISearcher` and Class `Searcher`, in `diskann` namespace)
-  - **`IQuantizer.hpp`, `Quantizer.hpp`/`.cpp`:** (Interface `IQuantizer` and Class `Quantizer`, in `diskann` namespace, if applicable)
-  - **`types.hpp` (from `diskann/common/` but types are in `diskann` namespace):**
-    - `diskann::node_id_t`
-    - `diskann::StorageTier`
-    - `diskann::Node`
-    - `diskann::Candidate`
-    - `diskann::GraphNodeView`
-    - `diskann::BuildProgress`
-  - **`utils.hpp` / `utils.cpp` (from `diskann/common/` but functions/types are in `diskann` or `diskann::utils` namespace):**
-    - General utility functions, e.g., `namespace diskann { namespace utils { ... } }`.
-  - **`constants.hpp` (from `diskann/common/` but constants are in `diskann` namespace):**
-    - Global constants, e.g., `namespace diskann { constexpr int MY_CONST = 5; }`.
+#### 2.2. Component Delineation:
 
-#### Distinction between Classes and Functional Approaches (Free Functions) & C++20 Considerations:
+- **`diskann/duckdb/`** (Components within this directory will declare `namespace duckdb { ... }`)
+  - **`DiskannIndex.hpp`/`.cpp`:** (Class `DiskannIndex`)
+    - **Nature:** **Stateful** (manages `diskann::Orchestrator`, interacts with DuckDB state).
+    - Primary DuckDB interface; translates DuckDB operations to `Orchestrator` calls; manages `Orchestrator` lifecycle and dependency injection.
+  - **`DiskannScanState.hpp`/`.cpp`:** (Class `DiskannScanState`)
+    - **Nature:** **Stateful** (holds state for an active scan operation).
+  - **`DiskannBindData.hpp`/`.cpp`, `DiskannCreateIndexInfo.hpp`/`.cpp`:** (Structs/Classes like `DiskannBindData`)
+    - **Nature:** Data containers; **Immutable** once populated during specific DuckDB phases (e.g., bind, create).
+  - **`diskann_extension.cpp`:**
+    - **Nature:** Contains **Stateless** registration functions (extension entry points).
+- **`diskann/core/` and `diskann/common/`** (Components within these directories will declare `namespace diskann { ... }`)
+  - **`Orchestrator.hpp`/`.cpp`:** (Class `Orchestrator`)
+    - **Nature:** **Stateful** (manages overall index state, configuration, core component lifecycles).
+    - Central coordinator; interacts with `diskann::IStorageManager`, `diskann::IGraphManager`, `diskann::ISearcher`, `diskann::IndexConfig`.
+    - **Callbacks:** May provide `std::function` callbacks (e.g., `void(const diskann::BuildProgress&)>`) to managed components for progress reporting.
+  - **`IndexConfig.hpp`/`.cpp`:** (Struct or Class `IndexConfig`)
+    - **Nature:** Data container; ideally **Immutable** after initial setup and passed by `const&` or immutable shared pointer. Stores all operational parameters.
+  - **`distance.hpp`:** (Namespace `diskann::distance`)
+    - **Nature:** Contains **Stateless**, **Pure Functions** (e.g., `l2_squared`). Output depends solely on input vectors and dimension. Templated for various data types, potentially constrained by C++20 Concepts for type safety.
+  - **`IStorageManager.hpp`, `StorageManager.hpp`/`.cpp`:** (Interface `IStorageManager`, Class `StorageManager`)
+    - **Nature:** **Stateful** (manages file handles, caches, on-disk layout, shadow store state).
+    - `IStorageManager`: Defines the contract for disk I/O.
+    - `StorageManager`: Concrete stateful implementation. May utilize quantization utilities (e.g., from `ternary_quantization.hpp`) internally if vectors are stored in a quantized form.
+    - **Callbacks:** May accept `std::function` for progress reporting on long operations (e.g., `MergeShadowToMain`).
+  - **`IGraphManager.hpp`, `GraphManager.hpp`/`.cpp`:** (Interface `IGraphManager`, Class `GraphManager`)
+    - **Nature:** **Stateful** (manages graph structure, Vamana algorithm state, metadata).
+    - **Callbacks:** Methods like `BuildGraph` may accept `std::function<void(const diskann::BuildProgress&)>` for progress updates.
+  - **`ISearcher.hpp`, `Searcher.hpp`/`.cpp`:** (Interface `ISearcher`, Class `Searcher`)
+    - **Nature:** **Stateful** (manages search context: candidate lists, visited sets, query parameters).
+    - **Callbacks:** May accept `std::function<bool(diskann::node_id_t)> filter_predicate` for dynamic filtering, or callbacks for incremental result processing. May utilize quantization utilities if query vectors or on-disk vectors need dequantization/quantization during search.
+  - **`ternary_quantization.hpp`:** (Header providing quantization utilities/classes within `diskann` namespace)
+    - **Nature:** Provides specific vector quantization logic (e.g., ternary quantization). Functions are likely **Stateless** and **Pure** if applying a fixed scheme, or a helper class might be **Stateless** if it doesn't learn parameters. Used by other components like `StorageManager` or `Searcher` as needed.
+  - **`types.hpp`:** (Types within `diskann` namespace)
+    - **Nature:** Defines data structures (e.g., `Node`, `Candidate`) and enumerations. Instances of `Node` read from disk are treated as **Immutable** within the scope of a single read operation.
+  - **`utils.hpp`/`.cpp`:** (Utilities within `diskann` or `diskann::utils` namespace)
+    - **Nature:** Primarily **Stateless** utility functions. Computational utilities should be **Pure Functions**. Logging functions inherently have side effects but should be deterministic.
+  - **`constants.hpp`:** (Constants within `diskann` namespace)
+    - **Nature:** Compile-time constants; inherently **Immutable** and **Stateless**.
 
-- **Classes:** Employed for components that encapsulate substantial state and behavior (e.g., `diskann::Orchestrator`, `diskann::StorageManager`). Interfaces (e.g., `diskann::ISomethingManager`) are paramount.
-- **Structs:** Primarily utilized for Plain Old Data (POD) (e.g., `diskann::Node`, `diskann::Candidate`).
-- **Namespaces with Free Functions:**
-  - Appropriate for stateless utility functions (e.g., `diskann::distance::l2_squared(...)`, `diskann::utils::log_message(...)`).
-- **C++20 for Enhanced Testability and Modern Software Practices:** (Content remains the same, references to `std::span`, Concepts, Ranges, `const` correctness, `std::optional`, `std::expected`, Smart Pointers, Modules).
+#### 2.3. Distinction between Classes, Structs, and Functional Approaches:
+
+- **Classes (Stateful Services & Complex Logic):** Employed for components encapsulating significant state and behavior (e.g., `diskann::Orchestrator`, `diskann::StorageManager`). Interfaces (`diskann::ISomethingManager`) are mandatory for these to enable polymorphism, dependency injection, and mocking.
+- **Structs (Data Aggregation):** Used for Plain Old Data (POD) or simple data aggregation (e.g., `diskann::Node`, `diskann::IndexConfig`). Typically **Immutable** post-initialization or represent data snapshots.
+- **Free Functions (Stateless Operations & Pure Computations):** Grouped in namespaces (e.g., `diskann::distance`, `diskann::utils`, functions within `ternary_quantization.hpp`). Appropriate for **Stateless** utilities and **Pure Functions**. C++20 Concepts are recommended for constraining template parameters in generic stateless functions.
+- **`std::function` (Callbacks for Extensible Behavior):** Injected into methods of stateful classes to provide specific, often stateless, behavioral customizations (e.g., progress reporting, search filtering) without requiring subclassing.
+
+#### 2.4. C++20 Considerations:
+
+- **`std::span`:** For non-owning, often **Immutable**, views of contiguous data.
+- **Concepts:** To define compile-time contracts for templated code, enhancing type safety and diagnostics, especially for stateless pure functions.
+- **`const` correctness:** To enforce immutability and improve reasoning about state.
+- Other features (Ranges, `std::optional`, `std::expected`, Smart Pointers) as applicable to enhance code safety and expressiveness.
 
 ### 3. Suggested Directory Structure
 
-The physical directory structure is updated to reflect PascalCase for filenames primarily defining classes:
+The physical directory structure reflects PascalCase for filenames primarily defining classes, and includes `ternary_quantization.hpp`:
 
 ```
 src/
 ├── diskann/
-│   ├── core/                   // Files here declare 'namespace diskann { ... }'
+│   ├── core/                   // Files declare 'namespace diskann { ... }'
 │   │   ├── Orchestrator.hpp
 │   │   ├── Orchestrator.cpp
-│   │   │
 │   │   ├── IndexConfig.hpp
 │   │   ├── IndexConfig.cpp
-│   │   │
 │   │   ├── distance.hpp        // Declares 'namespace diskann { namespace distance { ... } }'
-│   │   │
-│   │   ├── IStorageManager.hpp // Declares 'namespace diskann { ... }'
+│   │   ├── IStorageManager.hpp
 │   │   ├── StorageManager.hpp
 │   │   ├── StorageManager.cpp
-│   │   │
-│   │   ├── IGraphManager.hpp  // Declares 'namespace diskann { ... }'
+│   │   ├── IGraphManager.hpp
 │   │   ├── GraphManager.hpp
 │   │   ├── GraphManager.cpp
-│   │   │
-│   │   ├── ISearcher.hpp       // Declares 'namespace diskann { ... }'
+│   │   ├── ISearcher.hpp
 │   │   ├── Searcher.hpp
 │   │   ├── Searcher.cpp
-│   │   │
-│   │   ├── IQuantizer.hpp      // (Optional) Declares 'namespace diskann { ... }'
-│   │   ├── Quantizer.hpp       // (Optional)
-│   │   ├── Quantizer.cpp       // (Optional)
+│   │   ├── ternary_quantization.hpp // Provides specific quantization logic
 │   │
-│   ├── duckdb/                 // Files here declare 'namespace duckdb { ... }' (with caution)
+│   ├── duckdb/                 // Files declare 'namespace duckdb { ... }'
 │   │   ├── DiskannIndex.hpp
 │   │   ├── DiskannIndex.cpp
 │   │   ├── DiskannScanState.hpp
@@ -115,81 +118,46 @@ src/
 │   │   ├── DiskannBindData.hpp // And other similar PascalCase files
 │   │   └── ...
 │   │
-│   └── common/                 // Files here declare 'namespace diskann { ... }' or sub-namespaces like 'diskann::utils'
-│       ├── types.hpp           // Declares types in 'namespace diskann { ... }'
-│       ├── utils.hpp           // Declares 'namespace diskann { namespace utils { ... } }'
+│   └── common/                 // Files declare 'namespace diskann { ... }' or 'diskann::utils'
+│       ├── types.hpp
+│       ├── utils.hpp
 │       ├── utils.cpp
-│       └── constants.hpp       // Declares constants in 'namespace diskann { ... }'
+│       └── constants.hpp
 │
 ├── diskann_extension.cpp       // Main extension loading file
 └── CMakeLists.txt              // Main CMake file
 ```
 
-### 4. Advantages of the Proposed Architecture
+### 4. Architectural Advantages
 
-(Content remains largely the same, focusing on testability, SoC, maintainability, modularity, and scalability, independent of the specific top-level namespace choice for the interface layer, though the clarity of SoC might be slightly impacted by using the `duckdb` namespace directly for extension parts.)
+- **Enhanced Testability:** Stateful components are testable via DI and interfaces; stateless pure functions are inherently testable.
+- **Clear Separation of Concerns:** `duckdb::DiskannIndex` handles DuckDB integration; `diskann::Orchestrator` manages core stateful logic; stateless computations are isolated.
+- **Improved Maintainability & Readability:** Clear distinction between stateful services and stateless utilities.
+- **Modularity:** `diskann` namespace components form a reusable core.
+- **Scalability of Development Efforts:** Defined component boundaries.
 
-- **Enhanced Testability:** The `diskann` module, particularly the `Orchestrator` and its components, remains highly testable.
-- **Clear Separation of Concerns (SoC):** `duckdb::DiskannIndex` handles DuckDB integration; `diskann::Orchestrator` manages core logic.
-- **Improved Maintainability & Readability:** Smaller, focused classes. Algorithmic changes are isolated within the `diskann` namespace.
-- **Modularity:** The `diskann` namespace components form a reusable core.
-- **Scalability of Development Efforts:** Clear boundaries.
+### 5. Salient Design Principles and Best Practices
 
-### 5. Salient Considerations and Recommended Best Practices
-
-- **Interfaces (Abstract Base Classes):**
-
-  - Define abstract interfaces (e.g., `diskann::IStorageManager`) within the `diskann` namespace, typically in their own PascalCase header files (e.g., `IStorageManager.hpp`).
-
-  - Illustrative Example:
-
-    ```
-    // diskann/core/IStorageManager.hpp
-    namespace diskann {
-    class IStorageManager {
-    public:
-        virtual ~IStorageManager() = default;
-        virtual bool Initialize(const std::string& base_path, const IndexConfig& config) = 0;
-        virtual std::optional<Node> ReadNode(node_id_t node_id, StorageTier tier = StorageTier::MAIN) = 0;
-        virtual bool WriteNode(node_id_t node_id, const Node& node_data, StorageTier tier = StorageTier::SHADOW) = 0;
-        // ... other pure virtual functions
-    };
-    } // namespace diskann
-    ```
-
-- **Dependency Injection:**
-
-  - The `duckdb::DiskannIndex` is responsible for creating the `diskann::Orchestrator` and its concrete dependencies (which are also in the `diskann` namespace).
-  - The `diskann::Orchestrator` receives dependencies (e.g., `std::unique_ptr<diskann::IStorageManager>`) via its constructor.
-
-- **Explicit Ownership and State Management:** (Content remains the same, adjusted for new `diskann` namespace).
-
-- **Error Handling Strategies:** (Content remains the same).
-
-- **Concurrency Management:** (Content remains the same).
-
-- **Lifecycle Management:**
-
-  - `duckdb::DiskannIndex` manages the `diskann::Orchestrator`'s lifecycle.
+- **Interfaces for Stateful Services:** Define abstract interfaces (e.g., `diskann::IStorageManager`) using abstract base classes with pure virtual functions for all major stateful services within the `diskann` namespace.
+- **Dependency Injection (Constructor Injection):** `duckdb::DiskannIndex` instantiates and injects concrete implementations of `diskann` interfaces (e.g., `std::unique_ptr<diskann::IStorageManager>`) into the constructor of dependent components like `diskann::Orchestrator`. This is the primary mechanism for decoupling and enabling mock injection for tests.
+- **Explicit Ownership and State Management:** Clearly define ownership using smart pointers (`std::unique_ptr` for exclusive ownership of injected dependencies). Stateful components manage their internal state and resources.
+- **Error Handling:** Employ exceptions for unrecoverable errors. Use `std::optional` or `std::expected` (C++23 or library) for recoverable errors or optional return values.
+- **Concurrency Management:** Stateful components, particularly `diskann::StorageManager` and `diskann::GraphManager`, must be designed for thread safety if concurrent access is anticipated. Concurrency control mechanisms (e.g., locks) will be managed by the `Orchestrator` or within components as appropriate.
+- **Lifecycle Management:** `duckdb::DiskannIndex` manages the lifecycle of the `diskann::Orchestrator` and, through it, other core components. Destruction ensures resource release and data flushing.
 
 ### 6. Further Organizational and Planning Considerations
 
-(Content remains the same, but internal references to namespaces for core components will now point to the unified `diskann` namespace, e.g., `diskann::StorageManager`, `diskann::IndexConfig`).
+The following strategic points guide implementation based on this architecture:
 
 1. **Comprehensive Testing Strategy:**
-   - Unit Tests: Each class within `diskann` (e.g., `diskann::StorageManager`, `diskann::Orchestrator`) should have thorough unit tests.
-   - Integration Tests (Core): Test interactions between `diskann` components.
-   - Integration Tests (DuckDB Extension): Test `duckdb::DiskannIndex` and its interaction with `diskann` components.
-2. **Configuration Management and Propagation:**
-   - `duckdb::DiskannIndex` parses options into a `diskann::IndexConfig` object.
-3. **Shadow Implementation – Key Interface Considerations:**
-   - `diskann::IStorageManager` interface is central.
-   - `diskann::Orchestrator` coordinates.
-   - `diskann::IndexConfig` stores metadata.
-4. **Build System and Modularity (CMake):**
-   - Build `diskann` components (formerly core and common) potentially as a single static library or multiple, linked by the main extension.
-5. **On-Disk Format Versioning and Migration:**
-   - `diskann::IndexConfig` and `diskann::StorageManager` handle versioning.
-6. **Logging, Metrics, and Observability:** (Content remains the same).
+   - **Unit Tests:** For all `diskann` components. Stateless pure functions tested with diverse inputs. Stateful classes tested by mocking injected dependencies.
+   - **Core Integration Tests:** Validate interactions between `diskann` components.
+   - **DuckDB Extension Integration Tests:** SQL-based tests (`sqllogictest`) verifying end-to-end functionality.
+   - **Performance Benchmarks & Stress Tests:** For indexing, search, and durability, especially concerning the shadow mechanism.
+2. **Configuration Management:** `duckdb::DiskannIndex` parses SQL options into an immutable `diskann::IndexConfig` object, propagated to relevant `diskann` components.
+3. **Shadow Implementation Integration:** The `diskann::IStorageManager` interface is critical for abstracting interactions with main and shadow stores. The `diskann::Orchestrator` coordinates shadow operations.
+4. **Build System (CMake):** `diskann` components (core and common) built as static libraries, linked by the main extension library.
+5. **On-Disk Format Versioning:** `diskann::IndexConfig` and `diskann::StorageManager` will manage on-disk format versions to ensure compatibility and support migration paths.
+6. **Logging and Observability:** Implement structured logging with configurable levels. Expose key operational metrics for monitoring and debugging.
 
-By proactively planning for these aspects, the development process will be more structured, potential issues can be identified earlier, and the resulting extension will be more robust, maintainable, and user-friendly.
+This specification provides the architectural blueprint for a robust, maintainable, and testable DiskANN extension for DuckDB.

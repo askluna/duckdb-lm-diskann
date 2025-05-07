@@ -1,7 +1,8 @@
 /**
- * @file storage_manager.hpp
+ * @file StorageManager.hpp
  * @brief Declares functions related to LM-DiskANN index persistence and storage
  * management.
+ * TODO: MAKE INTO CLASS
  */
 #pragma once
 
