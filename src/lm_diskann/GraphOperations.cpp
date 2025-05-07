@@ -21,10 +21,10 @@
 namespace diskann {
 namespace core {
 
-GraphOperations::GraphOperations(const LmDiskannConfig &config,
-                                 const NodeLayoutOffsets &node_layout,
-                                 GraphManager &node_manager,
-                                 LmDiskannIndex &index_context)
+GraphOperations::GraphOperations(
+    const LmDiskannConfig &config, const NodeLayoutOffsets &node_layout,
+    GraphManager &node_manager,
+    ::diskann::duckdb::LmDiskannIndex &index_context)
     : config_(config), node_layout_(node_layout), node_manager_(node_manager),
       index_context_(index_context) {}
 
@@ -44,7 +44,8 @@ GraphOperations::SearchForCandidates(const float *target_vector_float,
   query_vec_handle.Flatten(1);
 
   // Initialize a scan state for this internal search
-  LmDiskannScanState search_state(query_vec_handle, K, scan_list_size);
+  ::duckdb::LmDiskannScanState search_state(query_vec_handle, K,
+                                            scan_list_size);
 
   // Perform the search using the LmDiskannIndex context
   // This assumes PerformSearch is accessible from LmDiskannIndex, possibly via

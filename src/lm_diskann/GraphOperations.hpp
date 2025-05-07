@@ -11,6 +11,10 @@
 #include "duckdb/execution/index/index_pointer.hpp"
 #include "index_config.hpp" // For LmDiskannConfig and NodeLayoutOffsets
 
+// ADD these includes for the full definitions
+#include "LmDiskannIndex.hpp"     // Defines ::diskann::duckdb::LmDiskannIndex
+#include "LmDiskannScanState.hpp" // Defines ::duckdb::LmDiskannScanState
+
 #include <utility> // For std::pair
 #include <vector>
 
@@ -18,9 +22,7 @@ namespace diskann {
 namespace core {
 
 // Forward declarations
-class GraphManager;   // Updated from LmDiskannGraphManager
-class LmDiskannIndex; // For calling PerformSearch or other index context
-class LmDiskannScanState;
+class GraphManager;
 
 class GraphOperations {
 public:
@@ -34,7 +36,8 @@ public:
    */
   GraphOperations(const LmDiskannConfig &config,
                   const NodeLayoutOffsets &node_layout,
-                  GraphManager &node_manager, LmDiskannIndex &index_context);
+                  GraphManager &node_manager,
+                  ::diskann::duckdb::LmDiskannIndex &index_context);
 
   /**
    * @brief Processes the insertion of a new node into the graph.
@@ -114,9 +117,10 @@ private:
 
   const LmDiskannConfig &config_;
   const NodeLayoutOffsets &node_layout_;
-  GraphManager &node_manager_; // Updated from LmDiskannGraphManager
-  LmDiskannIndex
-      &index_context_; // Provides context, e.g., PerformSearch capability
+  GraphManager &node_manager_;
+  ::diskann::duckdb::LmDiskannIndex
+      &index_context_; // QUALIFIED HERE: Provides context, e.g., PerformSearch
+                       // capability
 
   // --- Entry Point State (Owned by GraphOperations) ---
   /** @brief Pointer to the current graph entry point node. Initialized to
