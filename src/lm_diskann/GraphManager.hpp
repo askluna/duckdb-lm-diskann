@@ -1,6 +1,6 @@
 /**
- * @file StorageManager.hpp
- * @brief Defines the StorageManager class for managing node allocations,
+ * @file GraphManager.hpp
+ * @brief Defines the GraphManager class for managing node allocations,
  *        RowID mappings, and raw node data access.
  */
 #pragma once
@@ -19,18 +19,17 @@
 namespace diskann {
 namespace core {
 
-class StorageManager {
+class GraphManager {
 public:
   /**
-   * @brief Constructor for StorageManager.
+   * @brief Constructor for GraphManager.
    * @details Initializes the internal FixedSizeAllocator for managing node
    * blocks.
    * @param buffer_manager Reference to DuckDB's buffer manager.
    * @param block_size_bytes The size of each block to be managed by the
    * allocator.
    */
-  StorageManager(::duckdb::BufferManager &buffer_manager,
-                 idx_t block_size_bytes);
+  GraphManager(::duckdb::BufferManager &buffer_manager, idx_t block_size_bytes);
 
   /**
    * @brief Allocates a new block for a node and maps the row ID.

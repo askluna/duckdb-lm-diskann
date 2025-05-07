@@ -4,10 +4,10 @@
  * structure.
  */
 #include "GraphOperations.hpp"
+#include "GraphManager.hpp"       // For node access
 #include "LmDiskannIndex.hpp"     // For LmDiskannIndex context (PerformSearch)
 #include "LmDiskannScanState.hpp" // For creating scan states for internal searches
 #include "NodeAccessors.hpp"      // For direct block manipulation
-#include "StorageManager.hpp"     // For node access
 #include "distance.hpp" // For ComputeExactDistanceFloat and other distance utils
 
 #include "duckdb/common/limits.hpp"
@@ -24,7 +24,7 @@ namespace core {
 
 GraphOperations::GraphOperations(const LmDiskannConfig &config,
                                  const NodeLayoutOffsets &node_layout,
-                                 StorageManager &node_manager,
+                                 GraphManager &node_manager,
                                  LmDiskannIndex &index_context)
     : config_(config), node_layout_(node_layout), node_manager_(node_manager),
       index_context_(index_context) {}

@@ -17,9 +17,9 @@
 #include "duckdb/storage/table_io_manager.hpp"
 
 // Include headers for the refactored components
+#include "GraphManager.hpp"       // New component
 #include "GraphOperations.hpp"    // New component
 #include "LmDiskannScanState.hpp" // For scan state definition
-#include "StorageManager.hpp"     // New component
 #include "index_config.hpp"       // Include the new config header
 
 #include <map>    // Using std::map for in-memory RowID mapping for now
@@ -251,7 +251,7 @@ private:
 
   // --- NEW COMPONENT INSTANCES --- //
   /** @brief Manages node allocation, RowID mapping, and raw data access. */
-  ::duckdb::unique_ptr<::duckdb::StorageManager> node_manager_;
+  ::duckdb::unique_ptr<::duckdb::GraphManager> node_manager_;
   /** @brief Manages graph algorithms, structure, and entry point. */
   ::duckdb::unique_ptr<core::GraphOperations> graph_operations_;
 

@@ -12,7 +12,7 @@
 #include "duckdb/storage/index_storage_info.hpp"
 #include "index_config.hpp" // Include for enums AND LmDiskannMetadata struct
 
-namespace duckdb {
+namespace diskann {
 
 // Forward declarations needed
 class FixedSizeAllocator;
@@ -157,4 +157,4 @@ row_t GetEntryPointRowId(IndexPointer node_ptr, AttachedDatabase &db,
 // row_t GetRandomNodeID(AttachedDatabase &db, FixedSizeAllocator &allocator /*,
 // ART* rowid_map */);
 
-} // namespace duckdb
+} // namespace diskann

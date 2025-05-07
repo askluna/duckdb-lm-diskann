@@ -8,11 +8,11 @@
 #include "LmDiskannIndex.hpp"
 
 // Include refactored component headers
+#include "GraphManager.hpp"    // New
 #include "GraphOperations.hpp" // New
 #include "LmDiskannScanState.hpp"
-#include "NodeAccessors.hpp"  // Now directly used by GraphOperations primarily
-#include "StorageManager.hpp" // New
-#include "distance.hpp"       // For distance/conversion functions
+#include "NodeAccessors.hpp" // Now directly used by GraphOperations primarily
+#include "distance.hpp"      // For distance/conversion functions
 #include "index_config.hpp"
 #include "search.hpp"  // For PerformSearch
 #include "storage.hpp" // For Load/PersistMetadata, GetEntryPointRowId etc.
@@ -50,7 +50,7 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/storage/index_storage_info.hpp"
-#include "duckdb/storage/storage_manager.hpp" // Required for StorageManager
+#include "duckdb/storage/storage_manager.hpp" // Required for GraphManager
 #include "duckdb/storage/table_io_manager.hpp"
 
 using namespace ::duckdb;
@@ -113,9 +113,9 @@ LmDiskannIndex::LmDiskannIndex(
   block_size_bytes_ =
       AlignValue<idx_t, Storage::SECTOR_SIZE>(node_layout_.total_node_size);
 
-  // 6. Initialize StorageManager which creates its own FixedSizeAllocator
+  // 6. Initialize GraphManager which creates its own FixedSizeAllocator
   auto &buffer_manager = BufferManager::GetBufferManager(db_state_.db);
-  node_manager_ = make_uniq<StorageManager>(buffer_manager, block_size_bytes_);
+  node_manager_ = make_uniq<GraphManager>(buffer_manager, block_size_bytes_);
 
   // Instantiate GraphOperations (needs config, layout, node_manager, and this
   // index context)
@@ -280,7 +280,7 @@ void LmDiskannIndex::CommitDrop(IndexLock &index_lock) {
     node_manager_->Reset();
   }
   db_state_.metadata_ptr.Clear();
-  // in_memory_rowid_map_ is managed by StorageManager and cleared in its
+  // in_memory_rowid_map_ is managed by GraphManager and cleared in its
   // Reset()
   delete_queue_head_ptr_.Clear();
 }
@@ -382,7 +382,7 @@ void LmDiskannIndex::Delete(::duckdb::IndexLock &lock,
   IndexPointer new_node_ptr;
   try {
     if (!node_manager_) {
-      return ErrorData("StorageManager not initialized during Insert.");
+      return ErrorData("GraphManager not initialized during Insert.");
     }
     new_node_ptr = node_manager_->AllocateNode(row_id);
   } catch (const std::exception &e) {
@@ -393,7 +393,7 @@ void LmDiskannIndex::Delete(::duckdb::IndexLock &lock,
   try {
     if (!node_manager_) {
       return ErrorData(
-          "StorageManager not initialized before GetNodeDataMutable.");
+          "GraphManager not initialized before GetNodeDataMutable.");
     }
     new_node_data = node_manager_->GetNodeDataMutable(new_node_ptr);
 
@@ -450,7 +450,7 @@ idx_t LmDiskannIndex::GetInMemorySize() {
   idx_t base_size = 0;
   if (node_manager_) {
     base_size +=
-        node_manager_->GetInMemorySize(); // StorageManager's size includes its
+        node_manager_->GetInMemorySize(); // GraphManager's size includes its
                                           // allocator and map
   }
   return base_size;
@@ -505,7 +505,7 @@ string LmDiskannIndex::VerifyAndToString(IndexLock &state,
       "\n - Allocator Blocks Used: %lld",
       node_manager_ ? node_manager_->GetAllocator().GetSegmentCount() : 0);
   result +=
-      StringUtil::Format("\n - Node Count (from StorageManager): %lld",
+      StringUtil::Format("\n - Node Count (from GraphManager): %lld",
                          node_manager_ ? node_manager_->GetNodeCount() : 0);
   result += StringUtil::Format(
       "\n - Entry Point RowID (from GraphOperations): %lld",
@@ -633,7 +633,7 @@ idx_t LmDiskannIndex::Scan(::duckdb::IndexScanState &state,
 void LmDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
   if (!node_manager_) {
     throw InternalException(
-        "StorageManager not initialized in InitializeNewIndex");
+        "GraphManager not initialized in InitializeNewIndex");
   }
   db_state_.metadata_ptr = node_manager_->GetAllocator().New();
   delete_queue_head_ptr_.Clear();
@@ -673,7 +673,7 @@ void LmDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
   if (!node_manager_ ||
       db_state_.metadata_ptr.Get() == 0) { // Check Get() != 0 for metadata_ptr
     throw InternalException(
-        "StorageManager or metadata pointer invalid in LoadFromStorage");
+        "GraphManager or metadata pointer invalid in LoadFromStorage");
   }
 
   core::LmDiskannMetadata loaded_metadata;
@@ -707,11 +707,11 @@ void LmDiskannIndex::LoadFromStorage(const IndexStorageInfo &storage_info) {
         block_size_bytes_, expected_block_size));
   }
 
-  // TODO: StorageManager should handle populating its RowID map from storage
+  // TODO: GraphManager should handle populating its RowID map from storage
   // (e.g., by scanning allocator blocks if no ART yet)
   Printer::Print(
-      "Warning: LmDiskannIndex loaded, but StorageManager's RowID map NOT "
-      "populated from storage (full scan or ART integration in StorageManager "
+      "Warning: LmDiskannIndex loaded, but GraphManager's RowID map NOT "
+      "populated from storage (full scan or ART integration in GraphManager "
       "needed). This may lead to issues.");
 
   row_t loaded_entry_point_rowid = NumericLimits<row_t>::Maximum();

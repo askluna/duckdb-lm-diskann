@@ -17,7 +17,7 @@ namespace diskann {
 namespace core {
 
 // Forward declarations
-class StorageManager; // Updated from LmDiskannStorageManager
+class GraphManager;   // Updated from LmDiskannGraphManager
 class LmDiskannIndex; // For calling PerformSearch or other index context
 class LmDiskannScanState;
 class RandomEngine;
@@ -34,7 +34,7 @@ public:
    */
   GraphOperations(const LmDiskannConfig &config,
                   const NodeLayoutOffsets &node_layout,
-                  StorageManager &node_manager, LmDiskannIndex &index_context);
+                  GraphManager &node_manager, LmDiskannIndex &index_context);
 
   /**
    * @brief Processes the insertion of a new node into the graph.
@@ -114,7 +114,7 @@ private:
 
   const LmDiskannConfig &config_;
   const NodeLayoutOffsets &node_layout_;
-  StorageManager &node_manager_; // Updated from LmDiskannStorageManager
+  GraphManager &node_manager_; // Updated from LmDiskannGraphManager
   LmDiskannIndex
       &index_context_; // Provides context, e.g., PerformSearch capability
 
