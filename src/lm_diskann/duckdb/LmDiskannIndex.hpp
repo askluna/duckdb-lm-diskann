@@ -225,7 +225,7 @@ private:
    * @param config The index configuration.
    * @param find_exact_distances Flag for final re-ranking.
    */
-  friend void PerformSearch(::duckdb::LmDiskannScanState &scan_state,
+  friend void PerformSearch(LmDiskannScanState &scan_state,
                             LmDiskannIndex &index,
                             const core::LmDiskannConfig &config,
                             bool find_exact_distances);
