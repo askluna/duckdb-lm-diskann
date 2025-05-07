@@ -1,20 +1,14 @@
 #pragma once
 
+#include "index_config.hpp" // Added include for IndexConfig definition
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
 
-// Forward declarations for dependencies
-// These will be resolved by including their respective headers later.
 namespace duckdb {
-// Forward declaration for DuckDB's ClientContext, if Orchestrator needs it
-// directly or indirectly through one of its immediate dependencies. For now,
-// let's assume it might be needed for some operations or setup. If not, it can
-// be removed.
 class ClientContext;
 } // namespace duckdb
-
-namespace diskann {
 
 // Forward declare types that might be used in method signatures
 // For example, if you have specific structs/classes for queries, results, data
@@ -26,12 +20,13 @@ namespace diskann {
 class IGraphManager;
 class IStorageManager;
 class ISearcher;
-// struct IndexConfig; // Removed forward declaration
-#include "../index_config.hpp" // Added include for IndexConfig definition
 
 namespace store {
 class IShadowStorageService;
 }
+
+namespace diskann {
+namespace core {
 
 class Orchestrator {
 public:
@@ -83,4 +78,5 @@ private:
   // etc.
 };
 
+} // namespace core
 } // namespace diskann

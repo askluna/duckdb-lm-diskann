@@ -4,7 +4,7 @@
  * LM-DiskANN configuration.
  */
 #include "index_config.hpp"
-#include "ternary_quantization.hpp" // Needed for WordsPerPlane
+#include "ternary_quantization.hpp" // Needed for WordsPerPlane. Path reverted based on linter hint.
 
 // #include "duckdb/parser/binder/binder_exception.hpp" // Removed: File not
 // found
@@ -58,7 +58,7 @@ idx_t GetTernaryPlaneSizeBytes(idx_t dimensions) {
     throw ::duckdb::InternalException(
         "Cannot calculate plane size for 0 dimensions");
   }
-  return ::duckdb::WordsPerPlane(dimensions) * sizeof(uint64_t);
+  return WordsPerPlane(dimensions) * sizeof(uint64_t);
 }
 
 idx_t GetTernaryEdgeSizeBytes(idx_t dimensions) {

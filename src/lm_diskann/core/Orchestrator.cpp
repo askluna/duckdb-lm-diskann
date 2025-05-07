@@ -14,6 +14,7 @@
 // #include "duckdb.hpp" // For ClientContext if used
 
 namespace diskann {
+namespace core {
 
 Orchestrator::Orchestrator(
     std::unique_ptr<IStorageManager> storage_manager,
@@ -136,4 +137,5 @@ void Orchestrator::SaveIndex(const std::string &index_path) {
   // IShadowStorageService.
 }
 
+} // namespace core
 } // namespace diskann
