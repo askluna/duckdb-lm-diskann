@@ -5,10 +5,10 @@
  */
 #pragma once
 
-#include "config.hpp" // For LmDiskannConfig and NodeLayoutOffsets
 #include "duckdb.hpp"
 #include "duckdb/common/limits.hpp" // For NumericLimits
 #include "duckdb/execution/index/index_pointer.hpp"
+#include "index_config.hpp" // For LmDiskannConfig and NodeLayoutOffsets
 
 #include <utility> // For std::pair
 #include <vector>

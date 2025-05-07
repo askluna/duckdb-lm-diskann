@@ -4,14 +4,14 @@
  */
 #pragma once
 
-#include "config.hpp" // Include config for TernaryPlanesView and LmDiskannMetricType
 #include "duckdb/common/types.hpp" // For idx_t
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/storage/data_pointer.hpp" // For const_data_ptr_t
+#include "index_config.hpp" // Include config for TernaryPlanesView and LmDiskannMetricType
 
 #include <cstdint>
 
-// Forward declarations no longer needed as config.hpp is included
+// Forward declarations no longer needed as index_config.hpp is included
 // namespace duckdb {
 //     enum class LmDiskannMetricType : uint8_t;
 // }

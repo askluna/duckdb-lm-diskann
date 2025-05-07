@@ -3,7 +3,7 @@
  * @brief Implements distance calculation and vector conversion functions.
  */
 #include "distance.hpp"
-#include "config.hpp" // Needed for LmDiskannMetricType enum definition
+#include "index_config.hpp" // Needed for LmDiskannMetricType enum definition
 #include "ternary_quantization.hpp" // Needed for Approx Similarity: WordsPerPlane, EncodeTernary, GetKernel
 
 // #include "ternary_quantization.hpp" // No longer needed here

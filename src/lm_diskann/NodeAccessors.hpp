@@ -5,16 +5,16 @@
  */
 #pragma once
 
-#include "config.hpp" // For NodeLayoutOffsets
 #include "duckdb.hpp"
 #include "duckdb/common/types/row/row_layout.hpp" // For row_t ? Check if correct include
 #include "duckdb/storage/data_pointer.hpp" // For data_ptr_t, const_data_ptr_t
+#include "index_config.hpp"                // For NodeLayoutOffsets
 
 #include <cstdint>
 
 namespace duckdb {
 
-// Forward declare structs if not included via config.hpp
+// Forward declare structs if not included via index_config.hpp
 // struct NodeLayoutOffsets;
 // struct TernaryPlanesView;
 // struct MutableTernaryPlanesView;

@@ -12,10 +12,10 @@
 #include "LmDiskannScanState.hpp"
 #include "NodeAccessors.hpp" // Now directly used by GraphOperations primarily
 #include "NodeManager.hpp"   // New
-#include "config.hpp"
-#include "distance.hpp" // For distance/conversion functions
-#include "search.hpp"   // For PerformSearch
-#include "storage.hpp"  // For Load/PersistMetadata, GetEntryPointRowId etc.
+#include "distance.hpp"      // For distance/conversion functions
+#include "index_config.hpp"
+#include "search.hpp"  // For PerformSearch
+#include "storage.hpp" // For Load/PersistMetadata, GetEntryPointRowId etc.
 
 // Include necessary DuckDB headers used in this file
 #include "duckdb/common/constants.hpp" // For NumericLimits

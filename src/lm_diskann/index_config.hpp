@@ -1,5 +1,5 @@
 /**
- * @file config.hpp
+ * @file index_config.hpp
  * @brief Defines configuration structures, enums, constants, and functions for
  * the LM-DiskANN index.
  */
@@ -15,7 +15,8 @@
 #include <cstdint>
 #include <string>
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
 // --- Enums for LM-DiskANN Parameters --- //
 
@@ -123,9 +124,9 @@ struct NodeLayoutOffsets {
  * @brief Non-owning view of constant ternary bit planes.
  */
 struct TernaryPlanesView {
-  const_data_ptr_t positive_plane =
+  ::duckdb::const_data_ptr_t positive_plane =
       nullptr; // Pointer to the positive plane data.
-  const_data_ptr_t negative_plane =
+  ::duckdb::const_data_ptr_t negative_plane =
       nullptr;          // Pointer to the negative plane data.
   idx_t dimensions = 0; // Dimensionality of the vector these planes represent.
   idx_t words_per_plane =
@@ -145,9 +146,9 @@ struct TernaryPlanesView {
  * @brief Non-owning view of mutable ternary bit planes.
  */
 struct MutableTernaryPlanesView {
-  data_ptr_t positive_plane =
+  ::duckdb::data_ptr_t positive_plane =
       nullptr; // Pointer to the mutable positive plane data.
-  data_ptr_t negative_plane =
+  ::duckdb::data_ptr_t negative_plane =
       nullptr;          // Pointer to the mutable negative plane data.
   idx_t dimensions = 0; // Dimensionality of the vector these planes represent.
   idx_t words_per_plane =
@@ -196,7 +197,8 @@ struct TernaryPlaneBatchView {
  * @return LmDiskannConfig struct populated with parsed or default values.
  * @throws Exception if an unknown option is provided.
  */
-LmDiskannConfig ParseOptions(const case_insensitive_map_t<Value> &options);
+LmDiskannConfig
+ParseOptions(const ::duckdb::case_insensitive_map_t<::duckdb::Value> &options);
 
 /**
  * @brief Validates the combination of parameters within the config struct.
@@ -255,16 +257,18 @@ struct LmDiskannMetadata {
   LmDiskannVectorType node_vector_type =
       LmDiskannVectorType::UNKNOWN; // Type of vectors stored in nodes
   // Edge type is implicitly Ternary, no need to store explicitly
-  idx_t dimensions = 0;               // Vector dimensionality
-  uint32_t r = 0;                     // Max neighbors per node (graph degree)
-  uint32_t l_insert = 0;              // Search list size during insertion
-  float alpha = 0.0f;                 // Pruning factor during insertion
-  uint32_t l_search = 0;              // Search list size during query
-  idx_t block_size_bytes = 0;         // Size of each node block on disk
-  IndexPointer graph_entry_point_ptr; // Pointer to the entry node block
-  IndexPointer
+  idx_t dimensions = 0;       // Vector dimensionality
+  uint32_t r = 0;             // Max neighbors per node (graph degree)
+  uint32_t l_insert = 0;      // Search list size during insertion
+  float alpha = 0.0f;         // Pruning factor during insertion
+  uint32_t l_search = 0;      // Search list size during query
+  idx_t block_size_bytes = 0; // Size of each node block on disk
+  ::duckdb::IndexPointer
+      graph_entry_point_ptr; // Pointer to the entry node block
+  ::duckdb::IndexPointer
       delete_queue_head_ptr; // Pointer to the head of the delete queue block
   // IndexPointer rowid_map_root_ptr; // TODO: Add when ART is integrated
 };
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

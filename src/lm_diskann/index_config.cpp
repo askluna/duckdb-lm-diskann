@@ -1,9 +1,9 @@
 /**
- * @file config.cpp
+ * @file index_config.cpp
  * @brief Implements functions for parsing, validating, and calculating
  * LM-DiskANN configuration.
  */
-#include "config.hpp"
+#include "index_config.hpp"
 #include "ternary_quantization.hpp" // Needed for WordsPerPlane
 
 // #include "duckdb/parser/binder/binder_exception.hpp" // Removed: File not
@@ -19,9 +19,10 @@
 #include <algorithm> // For std::min, std::max
 #include <cmath>
 
-namespace duckdb {
+namespace diskann {
+namespace core {
 
-// Constant definitions are now in config.hpp using inline constexpr
+// Constant definitions are now in index_config.hpp using inline constexpr
 
 // --- Node Block Layout Constants (Keep definitions here if only used
 // internally in cpp) --- Offset of the neighbor count field within the node
@@ -44,7 +45,7 @@ idx_t GetVectorTypeSizeBytes(LmDiskannVectorType type) {
     return sizeof(int8_t);
   case LmDiskannVectorType::UNKNOWN:
   default:
-    throw InternalException(
+    throw ::duckdb::InternalException(
         "Unsupported or UNKNOWN LmDiskannVectorType for size calculation");
   }
 }
@@ -54,24 +55,27 @@ idx_t GetVectorTypeSizeBytes(LmDiskannVectorType type) {
 // the helper from ternary_quantization.hpp
 idx_t GetTernaryPlaneSizeBytes(idx_t dimensions) {
   if (dimensions == 0) {
-    throw InternalException("Cannot calculate plane size for 0 dimensions");
+    throw ::duckdb::InternalException(
+        "Cannot calculate plane size for 0 dimensions");
   }
-  return WordsPerPlane(dimensions) * sizeof(uint64_t);
+  return ::duckdb::WordsPerPlane(dimensions) * sizeof(uint64_t);
 }
 
 idx_t GetTernaryEdgeSizeBytes(idx_t dimensions) {
   return 2 * GetTernaryPlaneSizeBytes(dimensions);
 }
 
-LmDiskannConfig ParseOptions(const case_insensitive_map_t<Value> &options) {
+LmDiskannConfig
+ParseOptions(const ::duckdb::case_insensitive_map_t<::duckdb::Value> &options) {
   LmDiskannConfig config; // Starts with default values
 
   for (const auto &entry : options) {
-    const string &key_upper = StringUtil::Upper(entry.first);
-    const Value &val = entry.second;
+    const ::duckdb::string &key_upper =
+        ::duckdb::StringUtil::Upper(entry.first);
+    const ::duckdb::Value &val = entry.second;
 
     if (key_upper == LmDiskannOptionKeys::METRIC) {
-      string metric_str = StringUtil::Upper(val.ToString());
+      ::duckdb::string metric_str = ::duckdb::StringUtil::Upper(val.ToString());
       if (metric_str == "L2") {
         config.metric_type = LmDiskannMetricType::L2;
       } else if (metric_str == "COSINE") {
@@ -79,11 +83,12 @@ LmDiskannConfig ParseOptions(const case_insensitive_map_t<Value> &options) {
       } else if (metric_str == "IP") {
         config.metric_type = LmDiskannMetricType::IP;
       } else {
-        throw Exception(
-            ExceptionType::INVALID_INPUT,
-            StringUtil::Format("Unsupported METRIC type '%s' for LM_DISKANN "
-                               "index. Supported types: L2, COSINE, IP",
-                               metric_str));
+        throw ::duckdb::Exception(
+            ::duckdb::ExceptionType::INVALID_INPUT,
+            ::duckdb::StringUtil::Format("Unsupported METRIC type '%s' for "
+                                         "LM_DISKANN index. Supported types: "
+                                         "L2, COSINE, IP",
+                                         metric_str));
       }
     } else if (key_upper == LmDiskannOptionKeys::R) {
       config.r = val.GetValue<uint32_t>();
@@ -95,11 +100,12 @@ LmDiskannConfig ParseOptions(const case_insensitive_map_t<Value> &options) {
       config.l_search = val.GetValue<uint32_t>();
     } else {
       // Error on unknown option - helps catch typos
-      throw Exception(ExceptionType::INVALID_INPUT,
-                      StringUtil::Format(
-                          "Unknown option '%s' for LM_DISKANN index. Allowed "
-                          "options: METRIC, R, L_INSERT, ALPHA, L_SEARCH",
-                          entry.first));
+      throw ::duckdb::Exception(
+          ::duckdb::ExceptionType::INVALID_INPUT,
+          ::duckdb::StringUtil::Format(
+              "Unknown option '%s' for LM_DISKANN index. Allowed "
+              "options: METRIC, R, L_INSERT, ALPHA, L_SEARCH",
+              entry.first));
     }
     // NODE_TYPE and DIMENSIONS are derived from the column type later
     // EDGE_TYPE is implicitly TERNARY
@@ -110,41 +116,45 @@ LmDiskannConfig ParseOptions(const case_insensitive_map_t<Value> &options) {
 
 void ValidateParameters(const LmDiskannConfig &config) {
   if (config.r == 0)
-    throw Exception(ExceptionType::INVALID_INPUT,
-                    "LM_DISKANN parameter R must be > 0");
+    throw ::duckdb::Exception(::duckdb::ExceptionType::INVALID_INPUT,
+                              "LM_DISKANN parameter R must be > 0");
   if (config.l_insert == 0)
-    throw Exception(ExceptionType::INVALID_INPUT,
-                    "LM_DISKANN parameter L_INSERT must be > 0");
+    throw ::duckdb::Exception(::duckdb::ExceptionType::INVALID_INPUT,
+                              "LM_DISKANN parameter L_INSERT must be > 0");
   if (config.alpha < 1.0f)
-    throw Exception(ExceptionType::INVALID_INPUT,
-                    "LM_DISKANN parameter ALPHA must be >= 1.0");
+    throw ::duckdb::Exception(::duckdb::ExceptionType::INVALID_INPUT,
+                              "LM_DISKANN parameter ALPHA must be >= 1.0");
   if (config.l_search == 0)
-    throw Exception(ExceptionType::INVALID_INPUT,
-                    "LM_DISKANN parameter L_SEARCH must be > 0");
+    throw ::duckdb::Exception(::duckdb::ExceptionType::INVALID_INPUT,
+                              "LM_DISKANN parameter L_SEARCH must be > 0");
   if (config.l_insert < config.r)
-    throw Exception(
-        ExceptionType::INVALID_INPUT,
-        StringUtil::Format("LM_DISKANN L_INSERT (%u) must be >= R (%u)",
-                           config.l_insert, config.r));
+    throw ::duckdb::Exception(
+        ::duckdb::ExceptionType::INVALID_INPUT,
+        ::duckdb::StringUtil::Format("LM_DISKANN L_INSERT (%u) must be >= R "
+                                     "(%u)",
+                                     config.l_insert, config.r));
 
   // Validate required parameters that are set later
   if (config.dimensions == 0) {
-    throw Exception(ExceptionType::INVALID_INPUT,
-                    "LM_DISKANN dimensions must be set (derived from column "
-                    "type) and > 0 before validation");
+    throw ::duckdb::Exception(
+        ::duckdb::ExceptionType::INVALID_INPUT,
+        "LM_DISKANN dimensions must be set (derived from column "
+        "type) and > 0 before validation");
   }
   if (config.node_vector_type == LmDiskannVectorType::UNKNOWN) {
-    throw Exception(ExceptionType::INVALID_INPUT,
-                    "LM_DISKANN node_vector_type must be set (derived from "
-                    "column type) before validation");
+    throw ::duckdb::Exception(
+        ::duckdb::ExceptionType::INVALID_INPUT,
+        "LM_DISKANN node_vector_type must be set (derived from "
+        "column type) before validation");
   }
 
   // Implicitly assume neighbors are TERNARY
   // Ternary dot product is not a reliable proxy for L2 distance.
   if (config.metric_type == LmDiskannMetricType::L2) {
-    throw Exception(ExceptionType::INVALID_INPUT,
-                    "LM_DISKANN with implicit TERNARY neighbors is not "
-                    "compatible with METRIC 'L2'. Use COSINE or IP.");
+    throw ::duckdb::Exception(
+        ::duckdb::ExceptionType::INVALID_INPUT,
+        "LM_DISKANN with implicit TERNARY neighbors is not "
+        "compatible with METRIC 'L2'. Use COSINE or IP.");
   }
 
   // Add more validation as needed (e.g., max dimensions, max R?)
@@ -157,8 +167,9 @@ NodeLayoutOffsets CalculateLayoutInternal(const LmDiskannConfig &config) {
   // Ensure required config members needed for layout are set
   if (config.dimensions == 0 ||
       config.node_vector_type == LmDiskannVectorType::UNKNOWN) {
-    throw InternalException("CalculateLayoutInternal requires dimensions and "
-                            "node_vector_type to be set in config");
+    throw ::duckdb::InternalException(
+        "CalculateLayoutInternal requires dimensions and "
+        "node_vector_type to be set in config");
   }
 
   idx_t node_vector_size_bytes =
@@ -169,15 +180,17 @@ NodeLayoutOffsets CalculateLayoutInternal(const LmDiskannConfig &config) {
   current_offset = sizeof(uint16_t);
 
   // Align for node vector
-  current_offset = AlignValue<idx_t, NODE_VECTOR_ALIGNMENT>(current_offset);
+  current_offset =
+      ::duckdb::AlignValue<idx_t, NODE_VECTOR_ALIGNMENT>(current_offset);
   layout.node_vector_offset = current_offset;
   current_offset += node_vector_size_bytes;
 
   // Align for neighbor IDs (row_t is usually 64-bit, likely already aligned but
   // enforce)
-  current_offset = AlignValue<idx_t, sizeof(row_t)>(current_offset);
+  current_offset =
+      ::duckdb::AlignValue<idx_t, sizeof(::duckdb::row_t)>(current_offset);
   layout.neighbor_ids_offset = current_offset;
-  current_offset += config.r * sizeof(row_t);
+  current_offset += config.r * sizeof(::duckdb::row_t);
 
   // Calculate size of compressed TERNARY edge representation for ONE neighbor
   layout.ternary_edge_size_bytes = GetTernaryEdgeSizeBytes(config.dimensions);
@@ -185,14 +198,14 @@ NodeLayoutOffsets CalculateLayoutInternal(const LmDiskannConfig &config) {
       GetTernaryPlaneSizeBytes(config.dimensions);
 
   // Align for positive planes array
-  current_offset = AlignValue<idx_t, PLANE_ALIGNMENT>(current_offset);
+  current_offset = ::duckdb::AlignValue<idx_t, PLANE_ALIGNMENT>(current_offset);
   layout.neighbor_pos_planes_offset = current_offset;
   current_offset +=
       config.r *
       plane_size_bytes_per_neighbor; // Total size for all positive planes
 
   // Align for negative planes array
-  current_offset = AlignValue<idx_t, PLANE_ALIGNMENT>(current_offset);
+  current_offset = ::duckdb::AlignValue<idx_t, PLANE_ALIGNMENT>(current_offset);
   layout.neighbor_neg_planes_offset = current_offset;
   current_offset +=
       config.r *
@@ -232,4 +245,5 @@ const char *LmDiskannVectorTypeToString(LmDiskannVectorType type) {
   }
 }
 
-} // namespace duckdb
+} // namespace core
+} // namespace diskann

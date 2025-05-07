@@ -20,7 +20,7 @@
 #include "GraphOperations.hpp"    // New component
 #include "LmDiskannScanState.hpp" // For scan state definition
 #include "NodeManager.hpp"        // New component
-#include "config.hpp"             // Include the new config header
+#include "index_config.hpp"       // Include the new config header
 
 #include <map>    // Using std::map for in-memory RowID mapping for now
 #include <memory> // For unique_ptr

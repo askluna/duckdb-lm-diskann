@@ -5,12 +5,12 @@
  */
 #pragma once
 
-#include "config.hpp" // Include for enums AND LmDiskannMetadata struct
 #include "duckdb.hpp"
 #include "duckdb/common/common.hpp" // Include common for row_t
 #include "duckdb/execution/index/index_pointer.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
 #include "duckdb/storage/index_storage_info.hpp"
+#include "index_config.hpp" // Include for enums AND LmDiskannMetadata struct
 
 namespace duckdb {
 
