@@ -89,7 +89,7 @@
 #endif
 
 // Highway specific includes
-#include "hwy/hwy.h"
+#include <hwy/hwy.h>
 
 // For hwy::contrib::algo::SumsOf (if used directly for byte summation, ensure it's appropriate)
 // #include "hwy/contrib/algo/transform-inl.h"
