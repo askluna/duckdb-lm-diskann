@@ -20,7 +20,7 @@
 #include <vector>
 
 namespace diskann {
-namespace duckdb {
+namespace db {
 
 /**
  * @brief Holds the state required during an LM-DiskANN index scan (k-NN
@@ -59,5 +59,5 @@ struct LmDiskannScanState : public ::duckdb::IndexScanState {
   std::vector<common::row_t> result_row_ids;
 };
 
-} // namespace duckdb
+} // namespace db
 } // namespace diskann

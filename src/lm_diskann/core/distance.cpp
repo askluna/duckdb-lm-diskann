@@ -8,8 +8,6 @@
 
 // #include "ternary_quantization.hpp" // No longer needed here
 
-#include "duckdb/common/exception.hpp"
-#include "duckdb/common/limits.hpp" // For NumericLimits
 // #include "duckdb/common/types/vector.hpp" // Not needed for current
 // implementation #include "duckdb/common/types/value.hpp" // Not needed
 // #include "duckdb/common/string_util.hpp" // Not needed
@@ -24,7 +22,7 @@ namespace core {
 // --- Core Function Implementations --- //
 
 float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
-                                idx_t dimensions,
+                                common::idx_t dimensions,
                                 LmDiskannMetricType metric_type) {
   // TODO: Ideally, use optimized DuckDB functions if possible.
   // Placeholder manual implementation.
@@ -32,7 +30,7 @@ float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
   switch (metric_type) {
   case LmDiskannMetricType::L2: {
     float distance = 0.0f;
-    for (idx_t i = 0; i < dimensions; ++i) {
+    for (common::idx_t i = 0; i < dimensions; ++i) {
       float diff = a_ptr[i] - b_ptr[i];
       distance += diff * diff;
     }
@@ -44,7 +42,7 @@ float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
   }
   case LmDiskannMetricType::IP: { // Inner Product Distance = -IP
     float dot_product = 0.0f;
-    for (idx_t i = 0; i < dimensions; ++i) {
+    for (common::idx_t i = 0; i < dimensions; ++i) {
       dot_product += a_ptr[i] * b_ptr[i];
     }
     return -dot_product; // Return negative IP as distance
@@ -53,7 +51,7 @@ float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
     float dot_product = 0.0f;
     float norm_a_sq = 0.0f;
     float norm_b_sq = 0.0f;
-    for (idx_t i = 0; i < dimensions; ++i) {
+    for (common::idx_t i = 0; i < dimensions; ++i) {
       dot_product += a_ptr[i] * b_ptr[i];
       norm_a_sq += a_ptr[i] * a_ptr[i];
       norm_b_sq += b_ptr[i] * b_ptr[i];
@@ -89,7 +87,7 @@ float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
 float ComputeApproxSimilarityTernary(
     const float *query_float_ptr,
     const TernaryPlanesView &neighbor_planes, // Use struct view
-    idx_t dimensions) {
+    common::idx_t dimensions) {
 
   // Validate input struct and dimensions
   if (!query_float_ptr || !neighbor_planes.IsValid() || dimensions == 0) {

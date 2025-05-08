@@ -8,8 +8,8 @@
 #include "LmDiskannIndex.hpp"
 
 // Include refactored component headers
-#include "GraphManager.hpp"    // New
-#include "GraphOperations.hpp" // New
+#include "../core/GraphManager.hpp"    // New
+#include "../core/GraphOperations.hpp" // New
 #include "LmDiskannScanState.hpp"
 #include "Searcher.hpp"       // For PerformSearch
 #include "StorageManager.hpp" // For Load/PersistMetadata, GetEntryPointRowId etc.
@@ -76,7 +76,7 @@ class DiskannShadowStorageService; // Assuming this is the concrete class
 } // namespace diskann
 
 namespace diskann {
-namespace duckdb {
+namespace db {
 
 // Implementation of ParseOptions moved here
 core::LmDiskannConfig LmDiskannIndex::ParseOptions(
@@ -997,5 +997,5 @@ template float LmDiskannIndex::CalculateExactDistance<float, int8_t>(
 // --- Deletion Helper --- //
 // EnqueueDeletion (member version) and ProcessDeletionQueue are removed.
 
-} // namespace duckdb
+} // namespace db
 } // namespace diskann

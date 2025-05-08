@@ -86,10 +86,6 @@
 #include <utility>   // std::pair
 #include <vector>    // std::vector (used for query encoding buffer & results)
 
-// Ensure necessary duckdb types are included for other functions in this file
-#include "duckdb/common/types.hpp" // For idx_t, uint64_t (though stdint provides it)
-#include "duckdb/storage/data_pointer.hpp" // For const_data_ptr_t
-
 // Include SIMD headers based on target architecture
 #if defined(__x86_64__) || defined(_M_X64) // x86-64 Architecture
 #include <immintrin.h>                     // AVX, AVX2, AVX-512 intrinsics

@@ -1,6 +1,6 @@
 
-#include "storage_manager.hpp"
-
+#include "StorageManager.hpp"
+#include "../common/types.hpp"
 #include "duckdb/common/limits.hpp" // For NumericLimits
 #include "duckdb/common/printer.hpp"
 #include "duckdb/execution/index/fixed_size_allocator.hpp"
@@ -31,7 +31,7 @@ bool TryGetNodePointer(::duckdb::row_t row_id, ::duckdb::IndexPointer &node_ptr,
                        AttachedDatabase &db /*, ART* rowid_map */) {
   // FIXME: Implement RowID map lookup (e.g., using ART)
   // This function would encapsulate the ART lookup logic.
-  throw ::duckdb::NotImplementedException(
+  throw common::NotImplementedException(
       "Persistent TryGetNodePointer is not implemented.");
   return false;
 }
@@ -43,9 +43,9 @@ AllocateNode(::duckdb::row_t row_id, ::duckdb::AttachedDatabase &db,
   // FIXME: Implement RowID map insertion
   // This function would encapsulate the allocator->New() call AND the ART
   // insert logic.
-  throw ::duckdb::NotImplementedException(
+  throw common::NotImplementedException(
       "Persistent AllocateNode is not implemented.");
-  return ::duckdb::IndexPointer();
+  return common::IndexPointer();
 }
 
 // Deletes a node from the RowID map and potentially frees the block
@@ -186,15 +186,16 @@ void EnqueueDeletion(row_t deleted_row_id, IndexPointer &delete_queue_head_ptr,
 }
 
 // Processes the queue during Vacuum (placeholder).
-void ProcessDeletionQueue(IndexPointer &delete_queue_head_ptr,
+void ProcessDeletionQueue(common::IndexPointer &delete_queue_head_ptr,
                           AttachedDatabase &db, FixedSizeAllocator &allocator,
                           const NodeLayoutOffsets &layout,
                           idx_t edge_vector_size_bytes) {
   // FIXME: Implement processing logic during Vacuum
   // Requires iterating through *all* nodes or a reverse index.
   if (delete_queue_head_ptr.IsValid()) {
-    Printer::Warning("ProcessDeletionQueue: Processing deferred deletions is "
-                     "not implemented.");
+    throw common::NotImplementedException(
+        "ProcessDeletionQueue: Processing deferred deletions is not "
+        "implemented.");
     // Conceptual clear after processing:
     // IndexPointer current_ptr = delete_queue_head_ptr;
     // std::vector<IndexPointer> blocks_to_free;
@@ -211,9 +212,10 @@ void ProcessDeletionQueue(IndexPointer &delete_queue_head_ptr,
 }
 
 // Gets a valid entry point row_id (persisted or random - placeholder).
-row_t GetEntryPointRowId(IndexPointer graph_entry_point_ptr,
-                         AttachedDatabase &db,
-                         FixedSizeAllocator &allocator /*, ART* rowid_map */) {
+common::row_t GetEntryPointRowId(
+    common::IndexPointer graph_entry_point_ptr, AttachedDatabase &db,
+    // TODO: Add rowid_map parameter remove fixed size allocator
+    common::FixedSizeAllocator &allocator /*, ART* rowid_map */) {
   // FIXME: Implement reliable entry point fetching
   if (graph_entry_point_ptr.IsValid()) {
     // Need inverse mapping from IndexPointer to row_id

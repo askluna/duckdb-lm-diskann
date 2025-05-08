@@ -17,8 +17,6 @@
 #include "duckdb/storage/table_io_manager.hpp"
 
 // Include headers for the refactored components
-#include "../core/GraphManager.hpp"
-#include "../core/GraphOperations.hpp"
 #include "../core/Orchestrator.hpp"
 #include "../core/index_config.hpp"
 #include "LmDiskannScanState.hpp"
@@ -33,7 +31,7 @@
 #include <vector>
 
 namespace diskann {
-namespace duckdb {
+namespace db {
 
 // Forward declarations for components used internally
 // class FixedSizeAllocator; // Now included
@@ -352,5 +350,5 @@ private:
                                 float *float_vector_out);
 };
 
-} // namespace duckdb
+} // namespace db
 } // namespace diskann
