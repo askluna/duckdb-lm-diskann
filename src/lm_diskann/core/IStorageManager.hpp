@@ -133,6 +133,64 @@ public:
   virtual void
   ProcessDeletionQueue(common::IndexPointer &delete_queue_head_ptr) = 0;
 
+  // --- Block-level operations needed by GraphManager ---
+
+  /**
+   * @brief Allocates a new block in storage for a node.
+   *
+   * The storage manager is responsible for finding or creating space for this
+   * node. The returned node_data_out is a pointer to the raw memory of the
+   * block. The caller (GraphManager) is responsible for initializing this
+   * memory using NodeAccessors.
+   *
+   * @param row_id The row_id associated with this node (for tracking/metadata
+   * if needed by storage).
+   * @param node_ptr_out Output parameter: The IndexPointer (block_id, offset)
+   * for the allocated block.
+   * @param node_data_out Output parameter: A mutable pointer to the allocated
+   * block's data.
+   * @return True if allocation was successful, false otherwise.
+   */
+  virtual bool AllocateNodeBlock(common::row_t row_id,
+                                 common::IndexPointer &node_ptr_out,
+                                 common::data_ptr_t &node_data_out) = 0;
+
+  /**
+   * @brief Retrieves a constant pointer to a node's block data.
+   *
+   * Used for read-only access to the node's vector or neighbors.
+   * The lifetime of the returned pointer is managed by the StorageManager
+   * (e.g., pinned buffer).
+   *
+   * @param node_ptr The IndexPointer of the node to retrieve.
+   * @return A constant pointer to the block's data, or nullptr if not
+   * found/error.
+   */
+  virtual common::const_data_ptr_t
+  GetNodeBlockData(common::IndexPointer node_ptr) const = 0;
+
+  /**
+   * @brief Retrieves a mutable pointer to a node's block data.
+   *
+   * Used for modifying a node's vector or neighbors.
+   * The lifetime of the returned pointer is managed by the StorageManager.
+   * After modification, MarkBlockDirty should be called.
+   *
+   * @param node_ptr The IndexPointer of the node to retrieve.
+   * @return A mutable pointer to the block's data, or nullptr if not
+   * found/error.
+   */
+  virtual common::data_ptr_t
+  GetMutableNodeBlockData(common::IndexPointer node_ptr) = 0;
+
+  /**
+   * @brief Marks a block as dirty, indicating its contents have changed and
+   * need to be persisted.
+   *
+   * @param node_ptr The IndexPointer of the block that was modified.
+   */
+  virtual void MarkBlockDirty(common::IndexPointer node_ptr) = 0;
+
   // Add other necessary virtual methods, e.g.:
   // virtual void GetMetadata(...) = 0;
   // virtual void SaveMetadata(...) = 0;

@@ -9,6 +9,14 @@
 #include "IGraphManager.hpp" // Inherit from the interface
 #include "index_config.hpp" // For LmDiskannConfig, NodeLayoutOffsets, TernaryPlanesView, MutableTernaryPlanesView
 
+// Forward declare interfaces for dependencies
+namespace diskann {
+namespace core {
+class IStorageManager; // Forward declaration
+class ISearcher;       // Forward declaration
+} // namespace core
+} // namespace diskann
+
 // DuckDB includes previously needed for BufferManager/FixedSizeAllocator are
 // removed as these are no longer direct responsibilities of GraphManager.
 
@@ -33,10 +41,16 @@ public:
    * @param node_layout Pre-calculated node layout offsets. Copied internally.
    * @param block_size_bytes The aligned size of each node block, as determined
    * by StorageManager.
+   * @param storage_manager Raw pointer to the storage manager instance. Must
+   * outlive GraphManager.
+   * @param searcher Raw pointer to the searcher instance. Must outlive
+   * GraphManager.
    */
   GraphManager(const LmDiskannConfig &config,
                const NodeLayoutOffsets &node_layout,
-               common::idx_t block_size_bytes);
+               common::idx_t block_size_bytes,
+               IStorageManager *storage_manager, // Added
+               ISearcher *searcher);             // Added
 
   ~GraphManager() override = default;
 
@@ -111,6 +125,10 @@ private:
   /// Aligned size of node blocks (const, set by StorageManager via
   /// Orchestrator).
   const common::idx_t block_size_bytes_;
+  /// Raw pointer to the storage manager. Not owned by GraphManager.
+  IStorageManager *storage_manager_; // Added
+  /// Raw pointer to the searcher. Not owned by GraphManager.
+  ISearcher *searcher_; // Added
 
   /// Maps DuckDB row_t to the IndexPointer of the node block. This is the
   /// primary in-memory graph structure.
