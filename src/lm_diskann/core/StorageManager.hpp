@@ -6,19 +6,70 @@
  */
 #pragma once
 
+#include "IStorageManager.hpp" // Include the interface
 #include "duckdb.hpp"
-#include "duckdb/common/common.hpp" // Include common for row_t
+#include "duckdb/common/common.hpp"                        // Include common for row_t
+#include "duckdb/execution/index/fixed_size_allocator.hpp" // For FixedSizeAllocator
 #include "duckdb/execution/index/index_pointer.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
+#include "duckdb/storage/buffer_manager.hpp" // For BufferManager
 #include "duckdb/storage/index_storage_info.hpp"
 #include "index_config.hpp" // Include for enums AND LmDiskannMetadata struct
 
+#include <memory> // For std::unique_ptr
+
 namespace diskann {
 namespace core {
-// Forward declarations needed
-class FixedSizeAllocator;
-class AttachedDatabase;
-struct NodeLayoutOffsets;
+// Forward declarations needed (some might be covered by includes now)
+// class FixedSizeAllocator; // Included
+class AttachedDatabase;   // Should come from duckdb.hpp or client context
+struct NodeLayoutOffsets; // Defined in index_config.hpp probably, or needs to be
+
+class StorageManager : public virtual core::IStorageManager {
+	public:
+	StorageManager(::duckdb::BufferManager &buffer_manager, const LmDiskannConfig &config,
+	               const NodeLayoutOffsets &node_layout);
+
+	~StorageManager() override = default;
+
+	// --- IStorageManager Interface Implementation ---
+	void LoadIndexContents(const std::string &index_path, LmDiskannConfig &config_out, IGraphManager *graph_manager_out,
+	                       common::IndexPointer &entry_point_ptr_out, common::row_t &entry_point_rowid_out,
+	                       common::IndexPointer &delete_queue_head_out) override;
+
+	void InitializeNewStorage(const std::string &index_path, const LmDiskannConfig &config) override;
+
+	void SaveIndexContents(const std::string &index_path, const LmDiskannConfig &config,
+	                       const IGraphManager *graph_manager, common::IndexPointer entry_point_ptr,
+	                       common::row_t entry_point_rowid, common::IndexPointer delete_queue_head) override;
+
+	common::idx_t GetInMemorySize() const override;
+
+	::duckdb::IndexStorageInfo GetIndexStorageInfo() override;
+
+	void EnqueueDeletion(common::row_t row_id, common::IndexPointer &delete_queue_head_ptr) override;
+
+	void ProcessDeletionQueue(common::IndexPointer &delete_queue_head_ptr) override;
+
+	bool AllocateNodeBlock(common::row_t row_id, common::IndexPointer &node_ptr_out,
+	                       common::data_ptr_t &node_data_out) override;
+
+	common::const_data_ptr_t GetNodeBlockData(common::IndexPointer node_ptr) const override;
+
+	common::data_ptr_t GetMutableNodeBlockData(common::IndexPointer node_ptr) override;
+
+	void MarkBlockDirty(common::IndexPointer node_ptr) override;
+
+	private:
+	::duckdb::BufferManager &buffer_manager_;
+	LmDiskannConfig config_;
+	NodeLayoutOffsets node_layout_;
+	std::unique_ptr<::duckdb::FixedSizeAllocator> allocator_;
+	::duckdb::AttachedDatabase &db_; // Added based on free function usage, might need to get from context
+
+	// Helper to get AttachedDatabase, assuming it can be derived or passed
+	// ::duckdb::AttachedDatabase& GetDB();
+};
 
 // --- Storage Management Interface (Placeholders/Signatures) --- //
 // These functions currently assume an external map/ART is used.
@@ -70,10 +121,10 @@ struct NodeLayoutOffsets;
  * @return BufferHandle for the pinned block.
  * @throws IOException if the pointer is invalid or pinning fails.
  */
-::duckdb::BufferHandle GetNodeBuffer(::duckdb::IndexPointer node_ptr,
-                                     ::duckdb::AttachedDatabase &db,
-                                     FixedSizeAllocator &allocator,
-                                     bool write_lock = false);
+// ::duckdb::BufferHandle GetNodeBuffer(::duckdb::IndexPointer node_ptr,
+//                                      ::duckdb::AttachedDatabase &db,
+//                                      FixedSizeAllocator &allocator,
+//                                      bool write_lock = false);
 
 // --- Metadata Persistence --- //
 
@@ -84,10 +135,10 @@ struct NodeLayoutOffsets;
  * @param allocator The FixedSizeAllocator used by the index.
  * @param metadata The metadata struct to persist.
  */
-void PersistMetadata(::duckdb::IndexPointer metadata_ptr,
-                     ::duckdb::AttachedDatabase &db,
-                     FixedSizeAllocator &allocator,
-                     const LmDiskannMetadata &metadata);
+// void PersistMetadata(::duckdb::IndexPointer metadata_ptr,
+//                      ::duckdb::AttachedDatabase &db,
+//                      FixedSizeAllocator &allocator,
+//                      const LmDiskannMetadata &metadata);
 
 /**
  * @brief Loads the index metadata from a specified block.
@@ -96,9 +147,9 @@ void PersistMetadata(::duckdb::IndexPointer metadata_ptr,
  * @param allocator The FixedSizeAllocator used by the index.
  * @param[out] metadata The metadata struct to load into.
  */
-void LoadMetadata(::duckdb::IndexPointer metadata_ptr,
-                  ::duckdb::AttachedDatabase &db, FixedSizeAllocator &allocator,
-                  LmDiskannMetadata &metadata);
+// void LoadMetadata(::duckdb::IndexPointer metadata_ptr,
+//                   ::duckdb::AttachedDatabase &db, FixedSizeAllocator &allocator,
+//                   LmDiskannMetadata &metadata);
 
 // --- Delete Queue Management --- //
 
@@ -113,10 +164,10 @@ void LoadMetadata(::duckdb::IndexPointer metadata_ptr,
  * @param allocator The FixedSizeAllocator (or potentially a dedicated one for
  * the queue).
  */
-void EnqueueDeletion(::duckdb::row_t deleted_row_id,
-                     ::duckdb::IndexPointer &delete_queue_head_ptr,
-                     ::duckdb::AttachedDatabase &db,
-                     FixedSizeAllocator &allocator);
+// void EnqueueDeletion(::duckdb::row_t deleted_row_id,
+//                      ::duckdb::IndexPointer &delete_queue_head_ptr,
+//                      ::duckdb::AttachedDatabase &db,
+//                      FixedSizeAllocator &allocator);
 
 /**
  * @brief Processes the deletion queue (placeholder implementation).
@@ -148,9 +199,9 @@ void EnqueueDeletion(::duckdb::row_t deleted_row_id,
  * @return The RowID found in the node block (or potentially MAX_ROW_ID).
  * @throws IOException if the block cannot be read.
  */
-::duckdb::row_t GetEntryPointRowId(::duckdb::IndexPointer node_ptr,
-                                   ::duckdb::AttachedDatabase &db,
-                                   FixedSizeAllocator &allocator);
+// ::duckdb::row_t GetEntryPointRowId(::duckdb::IndexPointer node_ptr,
+//                                    ::duckdb::AttachedDatabase &db,
+//                                    FixedSizeAllocator &allocator);
 
 /**
  * @brief Gets a random node ID from the index.

@@ -17,13 +17,9 @@ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
 project(${TARGET_NAME})
 
-option(USE_SIMSIMD
-       "Use SIMSIMD library to sacrifice portability for vectorized search" OFF)
-if(USE_SIMSIMD)
-  add_definitions(-DDUCKDB_USEARCH_USE_SIMSIMD=1)
-else()
-  add_definitions(-DDUCKDB_USEARCH_USE_SIMSIMD=0)
-endif()
+# option(USE_SIMSIMD
+#        "Use SIMSIMD library to sacrifice portability for vectorized search" OFF)
+
 
 include_directories(src/include)
 

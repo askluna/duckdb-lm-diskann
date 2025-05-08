@@ -174,7 +174,7 @@ class LmDiskannIndex : public ::duckdb::BoundIndex {
 	}
 	/** @brief Get the calculated node layout offsets (via Coordinator ->
 	 * Config). */
-	const core::NodeLayoutOffsets &GetNodeLayout() const {
+	core::NodeLayoutOffsets GetNodeLayout() const {
 		if (!coordinator_)
 			throw ::duckdb::InternalException("Coordinator not initialized in GetNodeLayout");
 		// NodeLayoutOffsets might be part of config or calculated/held by

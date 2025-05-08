@@ -69,19 +69,21 @@ class Searcher : public ISearcher {
 
 	/**
 	 * @brief Searches for initial candidates, typically used during index build/insert.
-	 * @param query_vector The vector to search for.
-	 * @param config The index configuration.
-	 * @param graph_manager The graph manager.
-	 * @param num_candidates_to_find Number of candidates to retrieve.
-	 * @param candidate_row_ids Output vector of found candidate RowIDs.
-	 * @param search_list_size The search list size (L). If 0, uses config default.
+	 * @param new_node_vector The vector data of the new node to find neighbors for.
+	 * @param dimensions The dimensionality of the vector.
+	 * @param config The current index configuration (e.g., for search list size parameters).
+	 * @param graph_manager Provides access to the graph structure for traversal.
+	 * @param num_candidates_to_find The desired number of candidate row_ids to return.
+	 * @param current_entry_point The graph's current entry point to start the search from.
+	 * @param candidate_row_ids_out Output vector to store the RowIDs of the found candidate neighbors.
 	 */
-	void SearchForInitialCandidates(const float *query_vector, const LmDiskannConfig &config,
+	void SearchForInitialCandidates(const float *new_node_vector, common::idx_t dimensions, const LmDiskannConfig &config,
 	                                IGraphManager *graph_manager, common::idx_t num_candidates_to_find,
-	                                std::vector<common::row_t> &candidate_row_ids, common::idx_t search_list_size);
+	                                common::IndexPointer current_entry_point,
+	                                std::vector<common::row_t> &candidate_row_ids_out) override;
 
 	// Potentially GetInMemorySize if Searcher holds significant state
-	// common::idx_t GetInMemorySize() const override;
+	common::idx_t GetInMemorySize() const override;
 
 	private:
 	IStorageManager *storage_manager_; // Added member
