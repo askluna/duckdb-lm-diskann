@@ -36,12 +36,8 @@ Coordinator::Coordinator(std::unique_ptr<IStorageManager> storage_manager, std::
       searcher_(std::move(searcher)), shadow_storage_service_(std::move(shadow_storage_service)), config_(config)
 // context_(context)
 {
-	// graph_entry_point_ptr_.Invalidate(); // Initialize IndexPointer members
-	// delete_queue_head_ptr_.Invalidate();
-	::duckdb::IndexPointer temp_ptr;   // Diagnostic
-	temp_ptr.Invalidate();             // Diagnostic
-	graph_entry_point_ptr_ = temp_ptr; // Diagnostic
-	delete_queue_head_ptr_ = temp_ptr; // Diagnostic
+	graph_entry_point_ptr_ = common::IndexPointer(); // Initialize to invalid state
+	delete_queue_head_ptr_ = common::IndexPointer(); // Initialize to invalid state
 
 	std::cout << "Coordinator: Initialized." << std::endl;
 }
@@ -269,9 +265,9 @@ void Coordinator::LoadIndex(const std::string &index_path) {
 
 	this->index_path_ = index_path;
 	this->index_loaded_ = true;
-	this->is_dirty_ = false;             // Crucial: A freshly loaded index is not dirty
-	graph_entry_point_ptr_.Invalidate(); // Initialize after load if needed by LoadIndexContents
-	delete_queue_head_ptr_.Invalidate();
+	this->is_dirty_ = false;                         // Crucial: A freshly loaded index is not dirty
+	graph_entry_point_ptr_ = common::IndexPointer(); // Assuming LoadIndexContents might not set if empty
+	delete_queue_head_ptr_ = common::IndexPointer(); // Assuming LoadIndexContents might not set if empty
 	std::cout << "Coordinator: Index loaded successfully from " << index_path << std::endl;
 }
 
@@ -308,16 +304,16 @@ void Coordinator::InitializeIndex(::diskann::common::idx_t estimated_cardinality
 
 	// 4. Set delete queue head to an empty state.
 	//    delete_queue_head_ptr_ =  ... // some null/empty representation
-	delete_queue_head_ptr_.Invalidate();
+	delete_queue_head_ptr_ = common::IndexPointer();
 
 	// 5. Set internal state
 	// this->index_path_ = ... // determined by storage_manager_ or config
-	this->index_loaded_ = true;          // Index is now 'loaded' in an empty state
-	this->is_dirty_ = true;              // New index, needs to be saved if anything is added
-	graph_entry_point_ptr_.Invalidate(); // Assuming IndexPointer has Invalidate or Clear
+	this->index_loaded_ = true; // Index is now 'loaded' in an empty state
+	this->is_dirty_ = true;     // New index, needs to be saved if anything is added
+	graph_entry_point_ptr_ = common::IndexPointer();
 	graph_entry_point_rowid_ = common::NumericLimits<common::row_t>::Maximum(); // Use
 	                                                                            // common::NumericLimits
-	delete_queue_head_ptr_.Invalidate(); // Assuming IndexPointer has Invalidate or Clear
+	delete_queue_head_ptr_ = common::IndexPointer();
 	std::cout << "Coordinator: New index initialized." << std::endl;
 }
 
@@ -347,9 +343,9 @@ void Coordinator::HandleCommitDrop() {
 	index_loaded_ = false;
 	is_dirty_ = false;
 	index_path_.clear();
-	graph_entry_point_ptr_.Invalidate(); // Assuming IndexPointer has Invalidate or Clear
+	graph_entry_point_ptr_ = common::IndexPointer();
 	graph_entry_point_rowid_ = -1;
-	delete_queue_head_ptr_.Invalidate(); // Assuming IndexPointer has Invalidate or Clear
+	delete_queue_head_ptr_ = common::IndexPointer();
 
 	// The unique_ptrs to managers will be destroyed when Coordinator is
 	// destroyed.

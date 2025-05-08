@@ -8,6 +8,7 @@
 // Core interfaces and types
 #include "../common/ann.hpp"
 #include "../common/duckdb_types.hpp"
+// #include "../db/LmDiskannScanState.hpp" // REMOVED: LmDiskannScanState is not used directly by core searcher
 #include "IGraphManager.hpp"
 #include "IStorageManager.hpp"
 #include "distance.hpp" // For ComputeExactDistanceFloat and ConvertRawVectorToFloat (assuming moved here)
@@ -42,12 +43,21 @@ struct NodeCandidate {
 // bool ConvertRawVectorToFloat(common::const_data_ptr_t raw_vector_data, float *float_vector_out,
 //                              const LmDiskannConfig &config, const NodeLayoutOffsets &node_layout);
 
-void PerformSearch(diskann::db::LmDiskannScanState &scan_state, const LmDiskannConfig &config,
+void PerformSearch(const float *query_vector_ptr, common::idx_t k_neighbors, common::idx_t l_search_param,
+                   std::vector<common::row_t> &result_row_ids, const LmDiskannConfig &config,
                    const NodeLayoutOffsets &node_layout, IGraphManager &graph_manager, IStorageManager &storage_manager,
                    bool final_pass) {
 
-	if (scan_state.l_search == 0 || scan_state.l_search < scan_state.k) {
-		scan_state.l_search = std::max(static_cast<common::idx_t>(config.l_search), scan_state.k);
+	// if (scan_state.l_search == 0 || scan_state.l_search < scan_state.k) {
+	// 	scan_state.l_search = std::max(static_cast<common::idx_t>(config.l_search), scan_state.k);
+	// }
+	// Use l_search_param directly as it's already been determined by the caller (Searcher::Search)
+	common::idx_t current_l_search = l_search_param;
+	if (current_l_search == 0) { // Fallback if not set properly or too small
+		current_l_search = config.l_search;
+	}
+	if (current_l_search < k_neighbors) { // Ensure L_search is at least K
+		current_l_search = k_neighbors;
 	}
 
 	// Searcher manages these internally
@@ -63,7 +73,7 @@ void PerformSearch(diskann::db::LmDiskannScanState &scan_state, const LmDiskannC
 
 	// TODO: Check visibility/tombstone for entry point via IShadowStorageService?
 	if (entry_point_rowid == common::NumericLimits<common::row_t>::Maximum() ||
-	    entry_point_ptr == common::IndexPointer()) {
+	    !entry_point_ptr.IsValid()) { // Use IsValid() for common::IndexPointer
 		return;
 	}
 
@@ -86,8 +96,8 @@ void PerformSearch(diskann::db::LmDiskannScanState &scan_state, const LmDiskannC
 		return;
 	}
 
-	float dist_to_entry = diskann::core::ComputeExactDistanceFloat(
-	    scan_state.query_vector_ptr, entry_float_vector_storage.data(), config.dimensions, config.metric_type);
+	float dist_to_entry = diskann::core::ComputeExactDistanceFloat(query_vector_ptr, entry_float_vector_storage.data(),
+	                                                               config.dimensions, config.metric_type);
 
 	candidate_beam.push({dist_to_entry, entry_point_rowid});
 	visited_nodes.insert(entry_point_rowid);
@@ -100,7 +110,7 @@ void PerformSearch(diskann::db::LmDiskannScanState &scan_state, const LmDiskannC
 		NodeCandidate current_candidate = candidate_beam.top();
 		candidate_beam.pop();
 
-		if (current_candidate.distance > lowest_dist_in_results && top_candidates.size() >= scan_state.l_search) {
+		if (current_candidate.distance > lowest_dist_in_results && top_candidates.size() >= current_l_search) {
 			// Beam cutoff heuristic (can be refined)
 		}
 
@@ -161,13 +171,13 @@ void PerformSearch(diskann::db::LmDiskannScanState &scan_state, const LmDiskannC
 			// neighbor_node_block. Needs NodeLayoutOffsets and likely a replacement for
 			// NodeAccessors::GetNeighborTernaryPlanes. Using exact distance for now regardless of config flag.
 			dist_to_neighbor = diskann::core::ComputeExactDistanceFloat(
-			    scan_state.query_vector_ptr, neighbor_float_vector_storage.data(), config.dimensions, config.metric_type);
+			    query_vector_ptr, neighbor_float_vector_storage.data(), config.dimensions, config.metric_type);
 
-			if (top_candidates.size() < scan_state.l_search || dist_to_neighbor < lowest_dist_in_results) {
+			if (top_candidates.size() < current_l_search || dist_to_neighbor < lowest_dist_in_results) {
 				candidate_beam.push({dist_to_neighbor, neighbor_rowid});
 				top_candidates.push({dist_to_neighbor, neighbor_rowid});
 
-				if (top_candidates.size() > scan_state.l_search) {
+				if (top_candidates.size() > current_l_search) {
 					top_candidates.pop();
 				}
 				if (!top_candidates.empty()) {
@@ -209,17 +219,17 @@ void PerformSearch(diskann::db::LmDiskannScanState &scan_state, const LmDiskannC
 				continue;
 			}
 
-			float exact_dist = diskann::core::ComputeExactDistanceFloat(
-			    scan_state.query_vector_ptr, node_float_vector_storage.data(), config.dimensions, config.metric_type);
+			float exact_dist = diskann::core::ComputeExactDistanceFloat(query_vector_ptr, node_float_vector_storage.data(),
+			                                                            config.dimensions, config.metric_type);
 
 			final_results_min_heap.push({exact_dist, candidate.row_id});
-			if (final_results_min_heap.size() > scan_state.k) {
+			if (final_results_min_heap.size() > k_neighbors) {
 				final_results_min_heap.pop();
 			}
 		}
 
-		// Populate scan_state.result_row_ids from final_results_min_heap
-		scan_state.result_row_ids.clear();
+		// Populate result_row_ids from final_results_min_heap
+		result_row_ids.clear();
 		std::vector<NodeCandidate> final_k_candidates_vec;
 		while (!final_results_min_heap.empty()) {
 			final_k_candidates_vec.push_back(final_results_min_heap.top());
@@ -229,11 +239,70 @@ void PerformSearch(diskann::db::LmDiskannScanState &scan_state, const LmDiskannC
 		// To get results typically ordered by similarity (closest first), reverse if needed.
 		// For now, assume current order (smallest distance first from min-heap pop) is fine for result_row_ids.
 		// Or if specific order is needed: std::reverse(final_k_candidates_vec.begin(), final_k_candidates_vec.end());
-		scan_state.result_row_ids.reserve(final_k_candidates_vec.size());
+		result_row_ids.reserve(final_k_candidates_vec.size());
 		for (const auto &cand : final_k_candidates_vec) {
-			scan_state.result_row_ids.push_back(cand.row_id);
+			result_row_ids.push_back(cand.row_id);
 		}
 	}
+}
+
+// Implementation for Searcher class methods
+Searcher::Searcher(IStorageManager *storage_manager) : storage_manager_(storage_manager) {
+	if (!storage_manager_) {
+		// Or throw an exception, depending on desired strictness
+		std::cerr << "Warning: Searcher initialized with null IStorageManager." << std::endl;
+	}
+}
+
+void Searcher::Search(const float *query_vector, const LmDiskannConfig &config, IGraphManager *graph_manager,
+                      common::idx_t k_neighbors, std::vector<common::row_t> &result_row_ids,
+                      common::idx_t search_list_size_param) {
+	if (!graph_manager) {
+		throw std::runtime_error("Searcher::Search: GraphManager is null.");
+	}
+	if (!storage_manager_) { // Use the member variable
+		throw std::runtime_error("Searcher::Search: StorageManager member is null. Was Searcher properly initialized?");
+	}
+
+	common::idx_t l_search = (search_list_size_param > 0) ? search_list_size_param : config.l_search;
+	if (l_search < k_neighbors) {
+		l_search = k_neighbors; // L_search must be at least K
+	}
+
+	const NodeLayoutOffsets node_layout = diskann::core::CalculateLayoutInternal(config); // Correct function call
+
+	result_row_ids.clear(); // Clear previous results
+
+	// Call the refactored PerformSearch free function
+	PerformSearch(query_vector, k_neighbors, l_search, result_row_ids, config, node_layout, *graph_manager,
+	              *storage_manager_, true /* final_pass */);
+}
+
+void Searcher::SearchForInitialCandidates(const float *query_vector, const LmDiskannConfig &config,
+                                          IGraphManager *graph_manager, common::idx_t num_candidates_to_find,
+                                          std::vector<common::row_t> &candidate_row_ids,
+                                          common::idx_t search_list_size_param) {
+	if (!graph_manager) {
+		throw std::runtime_error("Searcher::SearchForInitialCandidates: GraphManager is null.");
+	}
+	if (!storage_manager_) { // Use the member variable
+		throw std::runtime_error(
+		    "Searcher::SearchForInitialCandidates: StorageManager member is null. Was Searcher properly initialized?");
+	}
+
+	common::idx_t l_search =
+	    (search_list_size_param > 0) ? search_list_size_param : config.l_insert; // Use l_insert for initial candidates
+	if (l_search < num_candidates_to_find) {
+		l_search = num_candidates_to_find;
+	}
+
+	const NodeLayoutOffsets node_layout = diskann::core::CalculateLayoutInternal(config); // Correct function call
+
+	candidate_row_ids.clear();
+
+	// Call PerformSearch, k_neighbors is num_candidates_to_find, final_pass is typically false for initial candidates
+	PerformSearch(query_vector, num_candidates_to_find, l_search, candidate_row_ids, config, node_layout, *graph_manager,
+	              *storage_manager_, false /* not final_pass */);
 }
 
 } // namespace core

@@ -224,7 +224,7 @@ class LmDiskannIndex : public ::duckdb::BoundIndex {
 		return coordinator_->GetConfig().l_search;
 	}
 	/** @brief Get the node vector type (via Coordinator -> Config). */
-	core::LmDiskannVectorType GetNodeVectorType() const {
+	common::LmDiskannVectorType GetNodeVectorType() const {
 		if (!coordinator_)
 			throw ::duckdb::InternalException("Coordinator not initialized in GetNodeVectorType");
 		return coordinator_->GetConfig().node_vector_type;

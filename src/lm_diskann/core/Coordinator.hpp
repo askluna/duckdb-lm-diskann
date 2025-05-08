@@ -14,10 +14,11 @@
 #include "IGraphManager.hpp"
 #include "ISearcher.hpp"
 #include "IStorageManager.hpp"
+#include "duckdb/storage/index_storage_info.hpp"
 
 namespace duckdb {
 class ClientContext;
-class IndexStorageInfo;
+// class IndexStorageInfo; // No longer needed as full include is added
 } // namespace duckdb
 
 // Forward declare types that might be used in method signatures
@@ -73,6 +74,10 @@ class Coordinator {
 	common::idx_t GetInMemorySize() const;
 
 	::duckdb::IndexStorageInfo GetIndexStorageInfo();
+
+	// --- New lifecycle/maintenance methods ---
+	void HandleCommitDrop();
+	void PerformVacuum();
 
 	// Other potential methods
 	// void Consolidate();

@@ -1,10 +1,10 @@
-
 #include "StorageManager.hpp"
 
-#include "../common/ann.hpp"
-#include "../common/duckdb_types.hpp"
-#include "duckdb/common/limits.hpp" // For NumericLimits
-#include "duckdb/common/printer.hpp"
+#include "../common/ann.hpp"           // For LmDiskann enums
+#include "../common/duckdb_types.hpp"  // For common type aliases
+#include "duckdb/common/exception.hpp" // For duckdb::IOException, duckdb::NotImplementedException
+#include "duckdb/common/limits.hpp"    // For NumericLimits
+#include "duckdb/common/printer.hpp"   // For duckdb::Printer
 #include "duckdb/execution/index/fixed_size_allocator.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
@@ -16,7 +16,8 @@
 // #include "duckdb/storage/art/art.hpp"
 // #include "duckdb/storage/art/art_key.hpp"
 
-#include <random> // For random node selection placeholder
+#include <iostream> // Added for std::cerr
+#include <random>   // For random node selection placeholder
 
 namespace diskann {
 namespace core {
@@ -27,13 +28,17 @@ namespace core {
 // LmDiskannIndex class methods for now. When persistent mapping (ART)
 // is added, the logic will move primarily into these functions,
 // taking the ART map reference as a parameter.
+// V2 NOTE: StorageManager will manage graph.lmd with custom I/O, not DuckDB allocators/BM for it.
+// IShadowStorageService will handle DuckDB interactions for metadata/lookup tables.
 
 // Tries to find the IndexPointer for a given row_id using the map
 bool TryGetNodePointer(::duckdb::row_t row_id, ::duckdb::IndexPointer &node_ptr,
-                       AttachedDatabase &db /*, ART* rowid_map */) {
+                       ::duckdb::AttachedDatabase &db /*, ART* rowid_map */) {
 	// FIXME: Implement RowID map lookup (e.g., using ART)
 	// This function would encapsulate the ART lookup logic.
-	throw common::NotImplementedException("Persistent TryGetNodePointer is not implemented.");
+	// V2 NOTE: This responsibility moves to IShadowStorageService.
+	throw common::NotImplementedException(
+	    "Persistent TryGetNodePointer is not implemented and belongs to IShadowStorageService under V2.");
 	return false;
 }
 
@@ -43,8 +48,11 @@ bool TryGetNodePointer(::duckdb::row_t row_id, ::duckdb::IndexPointer &node_ptr,
 	// FIXME: Implement RowID map insertion
 	// This function would encapsulate the allocator->New() call AND the ART
 	// insert logic.
-	throw common::NotImplementedException("Persistent AllocateNode is not implemented.");
-	return common::IndexPointer();
+	// V2 NOTE: StorageManager::AllocateNodeBlock provides block from graph.lmd. RowID map update by
+	// IShadowStorageService.
+	throw common::NotImplementedException("Persistent AllocateNode is not implemented. V2 separates block allocation "
+	                                      "(StorageManager) and map update (IShadowStorageService).");
+	return common::IndexPointer(); // Return default (invalid) common::IndexPointer
 }
 
 // Deletes a node from the RowID map and potentially frees the block
@@ -53,62 +61,63 @@ void DeleteNodeFromMapAndFreeBlock(::duckdb::row_t row_id, ::duckdb::AttachedDat
 	// FIXME: Implement RowID map deletion
 	// This function would encapsulate the ART delete logic AND the
 	// allocator->Free() call.
-	throw ::duckdb::NotImplementedException("Persistent DeleteNodeFromMapAndFreeBlock is not implemented.");
+	// V2 NOTE: StorageManager::FreeBlock adds to graph.lmd free list. RowID map removal by IShadowStorageService.
+	throw ::duckdb::NotImplementedException(
+	    "Persistent DeleteNodeFromMapAndFreeBlock is not implemented. V2 separates responsibilities.");
 }
 
 // Pins block using IndexPointer.
-::duckdb::BufferHandle GetNodeBuffer(::duckdb::IndexPointer node_ptr, ::duckdb::AttachedDatabase &db,
+::duckdb::BufferHandle GetNodeBuffer(common::IndexPointer node_ptr, ::duckdb::AttachedDatabase &db,
                                      ::duckdb::FixedSizeAllocator &allocator, bool write_lock) {
-	if (!node_ptr.IsValid()) {
+	if (!node_ptr.IsValid()) { // Assuming common::IndexPointer is duckdb::IndexPointer which has IsValid
 		throw ::duckdb::IOException("Invalid node pointer provided to GetNodeBuffer.");
 	}
-	auto &buffer_manager = ::duckdb::BufferManager::GetBufferManager(db);
+	// V2 NOTE: This function will change significantly. It will use StorageManager's internal cache
+	// and custom file I/O for graph.lmd, not DuckDB BufferManager for graph.lmd.
+	// auto &buffer_manager = ::duckdb::BufferManager::GetBufferManager(db);
 	// This function correctly uses the passed allocator reference.
-	return buffer_manager.Pin(allocator.GetBlock(node_ptr));
+	// return buffer_manager.Pin(allocator.GetBlock(node_ptr));
+	throw common::NotImplementedException("GetNodeBuffer needs V2 refactoring for custom file I/O.");
+	// To satisfy return type for now, though it's unreachable:
+	// return ::duckdb::BufferHandle();
 }
 
 // Writes index parameters and state pointers to the metadata block.
-void PersistMetadata(::duckdb::IndexPointer metadata_ptr, ::duckdb::AttachedDatabase &db,
-                     ::duckdb::FixedSizeAllocator &allocator, uint8_t format_version, LmDiskannMetricType metric_type,
-                     LmDiskannVectorType node_vector_type, idx_t dimensions, uint32_t r, uint32_t l_insert, float alpha,
-                     uint32_t l_search, idx_t block_size_bytes, ::duckdb::IndexPointer graph_entry_point_ptr,
-                     ::duckdb::IndexPointer delete_queue_head_ptr /*, IndexPointer rowid_map_root_ptr */) {
+void PersistMetadata(common::IndexPointer metadata_ptr, ::duckdb::AttachedDatabase &db,
+                     ::duckdb::FixedSizeAllocator &allocator, const LmDiskannMetadata &metadata) {
 
 	if (!metadata_ptr.IsValid()) {
 		throw ::duckdb::InternalException("Cannot persist LM_DISKANN metadata: metadata pointer is invalid.");
 	}
-	auto &buffer_manager = ::duckdb::BufferManager::GetBufferManager(db);
-	auto handle = buffer_manager.Pin(allocator.GetMetaBlock(metadata_ptr.GetBlockId()));
-	::duckdb::MetadataWriter writer(handle.GetFileBuffer(), metadata_ptr.GetOffset());
+	// V2 NOTE: This function will change. Metadata is managed by IShadowStorageService in diskann_store.duckdb.
+	// StorageManager::SaveIndexContents will trigger IShadowStorageService to save its metadata.
+	// Direct writing of LmDiskannMetadata using DuckDB allocators for graph.lmd metadata block is not V2.
+	// auto &buffer_manager = ::duckdb::BufferManager::GetBufferManager(db);
+	// auto handle = buffer_manager.Pin(allocator.GetMetaBlock(metadata_ptr.GetBlockId()));
+	// ::duckdb::MetadataWriter writer(handle.GetFileBuffer(), metadata_ptr.GetOffset());
 
-	// --- Serialize Parameters ---
-	writer.Write<uint8_t>(format_version);
-	writer.Write<LmDiskannMetricType>(metric_type);
-	writer.Write<LmDiskannVectorType>(node_vector_type);
-	writer.Write<idx_t>(dimensions);
-	writer.Write<uint32_t>(r);
-	writer.Write<uint32_t>(l_insert);
-	writer.Write<float>(alpha);
-	writer.Write<uint32_t>(l_search);
-	writer.Write<idx_t>(block_size_bytes);
-	// Serialize graph_entry_point_ptr_ and delete_queue_head_ptr_
-	writer.Write<::duckdb::IndexPointer>(graph_entry_point_ptr);
-	writer.Write<::duckdb::IndexPointer>(delete_queue_head_ptr);
-	// Serialize rowid_map_root_ptr_ (Get the root pointer from the ART index)
-	// writer.Write<IndexPointer>(rowid_map_root_ptr);
+	// // --- Serialize Parameters --- (Example based on old signature, LmDiskannMetadata struct is now passed)
+	// writer.Write<uint8_t>(metadata.format_version);
+	// writer.Write<common::LmDiskannMetricType>(metadata.metric_type);
+	// writer.Write<common::LmDiskannVectorType>(metadata.node_vector_type);
+	// writer.Write<common::idx_t>(metadata.dimensions);
+	// writer.Write<uint32_t>(metadata.r);
+	// writer.Write<uint32_t>(metadata.l_insert);
+	// writer.Write<float>(metadata.alpha);
+	// writer.Write<uint32_t>(metadata.l_search);
+	// writer.Write<common::idx_t>(metadata.block_size_bytes);
+	// writer.Write<common::IndexPointer>(metadata.graph_entry_point_ptr);
+	// writer.Write<common::IndexPointer>(metadata.delete_queue_head_ptr);
 
-	handle.SetModified();
+	// handle.SetModified();
+	throw common::NotImplementedException("PersistMetadata needs V2 refactoring for IShadowStorageService.");
 }
 
 // Reads index parameters and state pointers from the metadata block.
-void LoadMetadata(::duckdb::IndexPointer metadata_ptr, ::duckdb::AttachedDatabase &db,
-                  ::duckdb::FixedSizeAllocator &allocator, uint8_t &format_version, LmDiskannMetricType &metric_type,
-                  LmDiskannVectorType &node_vector_type, idx_t &dimensions, uint32_t &r, uint32_t &l_insert,
-                  float &alpha, uint32_t &l_search, idx_t &block_size_bytes,
-                  ::duckdb::IndexPointer &graph_entry_point_ptr,
-                  ::duckdb::IndexPointer &delete_queue_head_ptr /*, IndexPointer &rowid_map_root_ptr */) {
+void LoadMetadata(common::IndexPointer metadata_ptr, ::duckdb::AttachedDatabase &db,
+                  ::duckdb::FixedSizeAllocator &allocator, LmDiskannMetadata &metadata_out) {
 
-	// TODO: Implement this
+	// V2 NOTE: This function will change. Metadata is loaded by IShadowStorageService from diskann_store.duckdb.
 	// if (!metadata_ptr.IsValid()) {
 	//   throw ::duckdb::IOException(
 	//       "Cannot load LM_DISKANN index: metadata pointer is invalid.");
@@ -119,101 +128,79 @@ void LoadMetadata(::duckdb::IndexPointer metadata_ptr, ::duckdb::AttachedDatabas
 	// ::duckdb::MetadataReader reader(handle.GetFileBuffer(),
 	//                                 metadata_ptr.GetOffset());
 
-	// // --- Deserialize Parameters ---
-	// reader.Read<uint8_t>(format_version);
-	// // Version check should happen in the caller (LmDiskannIndex constructor)
-	// reader.Read<LmDiskannMetricType>(metric_type);
-	// reader.Read<LmDiskannVectorType>(node_vector_type);
-	// reader.Read<idx_t>(dimensions);
-	// reader.Read<uint32_t>(r);
-	// reader.Read<uint32_t>(l_insert);
-	// reader.Read<float>(alpha);
-	// reader.Read<::uint32_t>(l_search);
-	// reader.Read<idx_t>(block_size_bytes);
-	// reader.Read<::duckdb::IndexPointer>(graph_entry_point_ptr);
-	// reader.Read<::duckdb::IndexPointer>(delete_queue_head_ptr);
-	// reader.Read<IndexPointer>(rowid_map_root_ptr);
+	// // --- Deserialize Parameters --- (Example based on old signature)
+	// reader.Read<uint8_t>(metadata_out.format_version);
+	// reader.Read<common::LmDiskannMetricType>(metadata_out.metric_type);
+	// reader.Read<common::LmDiskannVectorType>(metadata_out.node_vector_type);
+	// reader.Read<common::idx_t>(metadata_out.dimensions);
+	// reader.Read<uint32_t>(metadata_out.r);
+	// reader.Read<uint32_t>(metadata_out.l_insert);
+	// reader.Read<float>(metadata_out.alpha);
+	// reader.Read<uint32_t>(metadata_out.l_search);
+	// reader.Read<common::idx_t>(metadata_out.block_size_bytes);
+	// reader.Read<common::IndexPointer>(metadata_out.graph_entry_point_ptr);
+	// reader.Read<common::IndexPointer>(metadata_out.delete_queue_head_ptr);
+	throw common::NotImplementedException("LoadMetadata needs V2 refactoring for IShadowStorageService.");
 }
 
 // Adds row_id to the persistent delete queue (placeholder).
-void EnqueueDeletion(row_t deleted_row_id, IndexPointer &delete_queue_head_ptr, AttachedDatabase &db,
-                     FixedSizeAllocator &allocator) {
-	// FIXME: Implement persistent delete queue using allocator_
-	// This implementation uses the main node allocator, which might waste space.
-	// A separate allocator for small queue entries might be better.
-	IndexPointer new_queue_entry_ptr = allocator.New(); // Use passed allocator
-	if (!new_queue_entry_ptr.IsValid()) {
-		throw IOException("Failed to allocate block for delete queue entry.");
-	}
+void EnqueueDeletion(common::row_t deleted_row_id, common::IndexPointer &delete_queue_head_ptr,
+                     ::duckdb::AttachedDatabase &db, ::duckdb::FixedSizeAllocator &allocator) {
+	// V2 NOTE: This responsibility moves to IShadowStorageService.
+	// IndexPointer new_queue_entry_ptr = allocator.New();
+	// if (!new_queue_entry_ptr.IsValid()) {
+	// 	throw ::duckdb::IOException("Failed to allocate block for delete queue entry.");
+	// }
 
-	auto handle = GetNodeBuffer(new_queue_entry_ptr, db, allocator, true); // Writable
-	auto data_ptr = handle.Ptr();
+	// auto handle = GetNodeBuffer(new_queue_entry_ptr, db, allocator, true);
+	// auto data_ptr = handle.Ptr();
 
-	// Write deleted_row_id and current delete_queue_head_ptr_
-	Store<row_t>(deleted_row_id, data_ptr);
-	IndexPointer current_head = delete_queue_head_ptr; // Read current head
-	// Write IndexPointer (block_id + offset)
-	Store<block_id_t>(current_head.GetBlockId(), data_ptr + sizeof(row_t));
-	Store<uint32_t>(current_head.GetOffset(), data_ptr + sizeof(row_t) + sizeof(block_id_t));
+	// Store<common::row_t>(deleted_row_id, data_ptr);
+	// common::IndexPointer current_head = delete_queue_head_ptr;
+	// Store<common::block_id_t>(current_head.GetBlockId(), data_ptr + sizeof(common::row_t));
+	// Store<uint32_t>(current_head.GetOffset(), data_ptr + sizeof(common::row_t) + sizeof(common::block_id_t));
 
-	handle.SetModified();
-
-	// Update delete_queue_head_ptr_ to point to the new block
-	delete_queue_head_ptr = new_queue_entry_ptr;
-
-	// Need to mark metadata as dirty because delete_queue_head_ptr changed
-	// This should be handled by the caller (LmDiskannIndex::Delete) setting its
-	// dirty flag. Printer::Warning("EnqueueDeletion using main allocator;
-	// metadata dirty flag not set here.");
+	// handle.SetModified();
+	// delete_queue_head_ptr = new_queue_entry_ptr;
+	throw common::NotImplementedException("EnqueueDeletion belongs to IShadowStorageService under V2.");
 }
 
 // Processes the queue during Vacuum (placeholder).
-void ProcessDeletionQueue(common::IndexPointer &delete_queue_head_ptr, AttachedDatabase &db,
-                          FixedSizeAllocator &allocator, const NodeLayoutOffsets &layout,
-                          idx_t edge_vector_size_bytes) {
-	// FIXME: Implement processing logic during Vacuum
-	// Requires iterating through *all* nodes or a reverse index.
+void ProcessDeletionQueue(common::IndexPointer &delete_queue_head_ptr, ::duckdb::AttachedDatabase &db,
+                          ::duckdb::FixedSizeAllocator &allocator, const NodeLayoutOffsets &layout,
+                          common::idx_t edge_vector_size_bytes) {
+	// V2 NOTE: Delete queue processing is complex. IShadowStorageService manages the queue data.
+	// StorageManager might be involved if graph.lmd nodes need direct updates (e.g. tombstones, neighbor list cleaning)
+	// based on the processed queue.
 	if (delete_queue_head_ptr.IsValid()) {
 		throw common::NotImplementedException("ProcessDeletionQueue: Processing deferred deletions is not "
-		                                      "implemented.");
-		// Conceptual clear after processing:
-		// IndexPointer current_ptr = delete_queue_head_ptr;
-		// std::vector<IndexPointer> blocks_to_free;
-		// while(current_ptr.IsValid()) {
-		//     // Read deleted_id and next_ptr from block at current_ptr
-		//     // Add current_ptr to blocks_to_free
-		//     // current_ptr = next_ptr;
-		// }
-		// // Free blocks
-		// for(auto ptr : blocks_to_free) { allocator.Free(ptr); }
-		// delete_queue_head_ptr.Clear();
-		// Need to mark metadata as dirty
+		                                      "implemented fully and needs V2 design.");
 	}
 }
 
 // Gets a valid entry point row_id (persisted or random - placeholder).
-common::row_t GetEntryPointRowId(common::IndexPointer graph_entry_point_ptr, AttachedDatabase &db,
-                                 // TODO: Add rowid_map parameter remove fixed size allocator
-                                 common::FixedSizeAllocator &allocator /*, ART* rowid_map */) {
-	// FIXME: Implement reliable entry point fetching
+common::row_t GetEntryPointRowId(common::IndexPointer graph_entry_point_ptr, ::duckdb::AttachedDatabase &db,
+                                 ::duckdb::FixedSizeAllocator &allocator) {
+	// V2 NOTE: The graph_entry_point_ptr (from LmDiskannMetadata via IShadowStorageService) points to a block in
+	// graph.lmd. To get row_id, read that block's header (NodeBlockHeader.row_id).
 	if (graph_entry_point_ptr.IsValid()) {
-		// Need inverse mapping from IndexPointer to row_id
-		// This might involve reading the block pointed to by graph_entry_point_ptr
-		// if the row_id isn't stored elsewhere.
-		Printer::Warning("GetEntryPointRowId: Cannot get row_id from pointer yet.");
-		return -2; // Placeholder indicating valid pointer but unknown rowid
+		// Placeholder: Reading block and header would happen here.
+		// For now, to avoid GetNodeBuffer call:
+		// ::duckdb::Printer::Warning("GetEntryPointRowId: Cannot get row_id from pointer yet (V2 requires reading block
+		// header).");
+		std::cerr << "Warning: GetEntryPointRowId: Cannot get row_id from pointer yet (V2 requires reading block header)."
+		          << std::endl;
+		return common::NumericLimits<common::row_t>::Maximum(); // Placeholder indicating valid pointer but unknown rowid
+		                                                        // for now
 	}
-	// Fallback: Get a random node ID
-	return GetRandomNodeID(db, allocator /*, rowid_map */);
+	// Fallback: Get a random node ID - V2 would query IShadowStorageService for a random valid mapping.
+	return GetRandomNodeID(db, allocator);
 }
 
 // Gets a random node ID from the index (placeholder).
-row_t GetRandomNodeID(AttachedDatabase &db, FixedSizeAllocator &allocator /*, ART* rowid_map */) {
-	// FIXME: Implement random node selection using RowID map iteration/sampling
-	// Requires iterating the ART index or sampling keys.
-	// Placeholder: Return invalid rowid
-	// Printer::Warning("GetRandomNodeID not implemented, returning invalid
-	// rowid.");
+common::row_t GetRandomNodeID(::duckdb::AttachedDatabase &db, ::duckdb::FixedSizeAllocator &allocator) {
+	// V2 NOTE: This would query IShadowStorageService for a random RowID from its mapping table.
+	// Printer::Warning("GetRandomNodeID not implemented, returning invalid rowid.");
 	return ::duckdb::NumericLimits<::duckdb::row_t>::Maximum();
 }
 

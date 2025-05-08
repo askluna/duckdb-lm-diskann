@@ -1,0 +1,65 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# DiskANN DuckDB Extension: C++20 Module Architecture Plan
+
+This rule outlines the C++20 modules-first architecture for the DiskANN DuckDB extension
+
+## Overview
+
+The architecture uses C++20 modules for all custom logic, except for the main extension entry point. It defines two primary namespaces:
+
+* `diskann::core`: For core DiskANN logic, residing in `src/lm_diskann/core`
+* `diskann:common`: For common types, residing in `src/lm_diskann/common`.  Has type alias [duckdb_types.hpp](mdc:src/lm_diskann/common/duckdb_types.hpp)
+* `diskann:db`: For modules directly interfacing with DuckDB, residing `src/lm_diskann/db/`
+* `diskann:store`: For loosly coupled acces to duckdb storage interface required by `::core` and initatied by `::db`
+
+
+A strict unidirectional dependency is enforced: `diskann` core/common/store modules **must not** depend on `duckdb` namespace modules or DuckDB headers directly.
+
+## Key Components and Directory Structure (Planned)
+
+The planned directory structure under `src/` is as follows:
+
+*   **`[diskann_extension.cpp](mdc:src/diskann_extension.cpp)`**:
+    *   The traditional C++ source file serving as the main extension entry point.
+    *   Uses `#include "duckdb.hpp"` and `import`s the primary DuckDB-facing integration module.
+
+*   **`src/lm_diskann/db/`**: Modules in the `duckdb` C++ namespace for DuckDB integration (corresponds to the `duckdb/` directory in the architectural plan).
+    *   These modules `#include` DuckDB headers and `import diskann` modules.
+    *   **`[DiskannIndex.cppm](mdc:src/lm_diskann/db/DiskannIndex.cppm)`**: Exports `duckdb::DiskannIndex`, the primary DuckDB interface. Instantiates and injects dependencies into `diskann::Coordinator`.
+    *   **`[DiskannShadowStorageService.cppm](mdc:src/lm_diskann/db/DiskannShadowStorageService.cppm)`**: Exports `duckdb::DiskannShadowStorageService`, implementing `diskann::store::IShadowStorageService` using DuckDB APIs.
+    *   Other modules: `[DiskannScanState.cppm](mdc:src/lm_diskann/db/DiskannScanState.cppm)`, `[DiskannBindData.cppm](mdc:src/lm_diskann/db/DiskannBindData.cppm)`.
+
+*   **`src/lm_diskann/core/`**: Core DiskANN logic modules in the `diskann` C++ namespace.
+    *   These modules **do not** depend on `duckdb` namespace modules or DuckDB headers.
+    *   **`[Coordinator.cppm](mdc:src/lm_diskann/core/Coordinator.cppm)`**: Exports `diskann::Coordinator`, the central component for core ANN logic. Imports interfaces like `IStorageManager`, `IGraphManager`, `ISearcher`, and `IShadowStorageService`.
+    *   **`[IndexConfig.cppm](mdc:src/lm_diskann/core/IndexConfig.cppm)`**: Defines the `diskann::IndexConfig` structure.
+    *   **`[StorageManager.cppm](mdc:src/lm_diskann/core/StorageManager.cppm)`**: Implements `diskann::IStorageManager` (interface likely in `[IStorageManager.cppm](mdc:src/lm_diskann/core/IStorageManager.cppm)`).
+    *   **`[GraphManager.cppm](mdc:src/lm_diskann/core/GraphManager.cppm)`**: Implements `diskann::IGraphManager` (interface likely in `[IGraphManager.cppm](mdc:src/lm_diskann/core/IGraphManager.cppm)`).
+    *   **`[Searcher.cppm](mdc:src/lm_diskann/core/Searcher.cppm)`**: Implements `diskann::ISearcher` (interface likely in `[ISearcher.cppm](mdc:src/lm_diskann/core/ISearcher.cppm)`).
+    *   Utility modules: `[distance.cppm](mdc:src/lm_diskann/core/distance.cppm)`, `[ternary_quantization.cppm](mdc:src/lm_diskann/core/ternary_quantization.cppm)`.
+
+*   **`src/lm_diskann/store/`**: Modules defining abstract interfaces for storage and platform services in the `diskann::store` C++ sub-namespace.
+    *   **`[IShadowStorageService.cppm](mdc:src/lm_diskann/store/IShadowStorageService.cppm)`**: Exports the `diskann::store::IShadowStorageService` interface.
+    *   **`[IFileSystem.cppm](mdc:src/lm_diskann/store/IFileSystem.cppm)`**: (Optional) Exports `diskann::store::IFileSystem` interface.
+
+*   **`src/lm_diskann/common/`**: Common utility and type modules in the `diskann` C++ namespace.
+    *   **`[types.cppm](mdc:src/lm_diskann/common/types.cppm)`**: Defines common data structures.
+    *   **`[utils.cppm](mdc:src/lm_diskann/common/utils.cppm)`**: Provides stateless utility functions.
+    *   **`[constants.cppm](mdc:src/lm_diskann/common/constants.cppm)`**: Defines constants.
+
+## Dependency Flow
+
+The dependency flow is strictly unidirectional, as described in the architectural plan:
+
+db => core
+db => store
+store => core
+common => core
+common => db
+diskann_extension.cpp => db
+
+**Crucially, `diskann` core, common, and store modules must not depend on (import or include) `duckdb` namespace modules or any DuckDB headers directly.** Interactions with DuckDB-specific resources from the `diskann` core are abstracted via interfaces defined in `diskann::store` (e.g., `[IShadowStorageService.cppm](mdc:src/lm_diskann/store/IShadowStorageService.cppm)`).
