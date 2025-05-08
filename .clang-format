@@ -26,4 +26,3 @@ AlwaysBreakTemplateDeclarations: Yes
 IncludeBlocks: Regroup
 Language: Cpp
 AccessModifierOffset: -4
-Cpp20: true

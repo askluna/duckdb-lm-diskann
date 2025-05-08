@@ -8,7 +8,7 @@
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 
-#include "lm_diskann/LmDiskannIndex.hpp"
+#include "lm_diskann/db/LmDiskannIndex.hpp"
 
 namespace duckdb {
 

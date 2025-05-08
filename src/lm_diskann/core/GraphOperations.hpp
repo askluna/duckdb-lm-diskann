@@ -8,10 +8,6 @@
 #include "duckdb.hpp"
 #include "index_config.hpp" // For LmDiskannConfig and NodeLayoutOffsets
 
-// ADD these includes for the full definitions
-#include "LmDiskannIndex.hpp"     // Defines ::diskanncommon::LmDiskannIndex
-#include "LmDiskannScanState.hpp" // Defines common::LmDiskannScanState
-
 #include <utility> // For std::pair
 #include <vector>
 
@@ -28,14 +24,10 @@ public:
    * @param config The index configuration.
    * @param node_layout The calculated layout of nodes on disk.
    * @param node_manager Reference to the node manager for data access.
-   * @param index_context Reference to the main index for context (e.g.,
-   * search capabilities).
    */
   GraphOperations(const LmDiskannConfig &config,
                   const NodeLayoutOffsets &node_layout,
-                  GraphManager &node_manager,
-                  /// TODO REMOVE Reference to the main index for context (e.g.,
-                  ::diskann::LmDiskannIndex &index_context);
+                  GraphManager &node_manager);
 
   /**
    * @brief Processes the insertion of a new node into the graph.
@@ -119,9 +111,6 @@ private:
   const NodeLayoutOffsets &node_layout_;
   /// Reference to the node manager for data access.
   GraphManager &node_manager_;
-  /// TODO REMOVE Reference to the main index for context (e.g., PerformSearch
-  /// capability).
-  // ::diskann::LmDiskannIndex &index_context_;
 
   // --- Entry Point State (Owned by GraphOperations) ---
   /// Pointer to the current graph entry point node. Initialized to invalid.

@@ -37,15 +37,15 @@ The dependency flow will be:
     * Implements DuckDB's `BoundIndex` interface.
     * Handles interaction with DuckDB systems (catalog, storage, query lifecycle).
     * Parses `WITH` clause options and translates them into `diskann::core::IndexConfig`.
-    * Instantiates and owns the `diskann::core::Orchestrator`.
-    * Instantiates and injects DuckDB-specific service implementations (e.g., `diskann::duckdb_impl::DiskannShadowStorageService`) into the `Orchestrator`.
-    * Translates DuckDB data structures and requests into calls on the `Orchestrator`.
+    * Instantiates and owns the `diskann::core::Coordinator`.
+    * Instantiates and injects DuckDB-specific service implementations (e.g., `diskann::duckdb_impl::DiskannShadowStorageService`) into the `Coordinator`.
+    * Translates DuckDB data structures and requests into calls on the `Coordinator`.
 * **Key Members (State from current `LmDiskannIndex` that stays):**
     * `LmDiskannDBState db_state_`
-    * `string index_data_path_` (or managed via Orchestrator/StorageManager)
-    * `unique_ptr<diskann::core::Orchestrator> orchestrator_`
-* **Key Methods (Wrappers around Orchestrator calls):**
-    * Constructor (parses options, inits Orchestrator)
+    * `string index_data_path_` (or managed via Coordinator/StorageManager)
+    * `unique_ptr<diskann::core::Coordinator> coordinator_`
+* **Key Methods (Wrappers around Coordinator calls):**
+    * Constructor (parses options, inits Coordinator)
     * `Append`, `Insert`, `Delete`
     * `InitializeScan`, `Scan`
     * `CommitDrop`, `GetStorageInfo`, `GetInMemorySize`, `Vacuum`, `VerifyAndToString`
@@ -72,8 +72,8 @@ The dependency flow will be:
 
 ### 3.3. `diskann::core` Namespace (Core DiskANN Logic)
 
-#### a. `diskann::core::Orchestrator`
-* **Files**: `diskann/core/Orchestrator.hpp`, `diskann/core/Orchestrator.cpp` (Refactors existing skeleton)
+#### a. `diskann::core::Coordinator`
+* **Files**: `diskann/core/Coordinator.hpp`, `diskann/core/Coordinator.cpp` (Refactors existing skeleton)
 * **Responsibility**:
     * Central component for core ANN logic, replacing much of `LmDiskannIndex`'s current internal logic.
     * Owns and manages the state of the DiskANN graph (entry points, metadata, configuration, on-disk paths via `IStorageManager`).
@@ -190,15 +190,15 @@ The current `LmDiskannIndex` class will be significantly slimmed down.
     * Validating the initial `IndexConfig`.
     * Calculating `NodeLayoutOffsets` and `block_size_bytes_`.
     * Creating the `diskann::duckdb_impl::DiskannShadowStorageService`.
-    * Creating and initializing the `diskann::core::Orchestrator`, injecting dependencies.
-    * Handling `storage_info` to decide between `Orchestrator::InitializeNewIndex` or `Orchestrator::LoadFromStorage`.
+    * Creating and initializing the `diskann::core::Coordinator`, injecting dependencies.
+    * Handling `storage_info` to decide between `Coordinator::InitializeNewIndex` or `Coordinator::LoadFromStorage`.
     * Managing `index_data_path_` creation.
 * `LmDiskannDBState db_state_` member.
-* `InitializeScan`: Translates DuckDB query vector into a format suitable for `Orchestrator::Search` and sets up `LmDiskannScanState`.
-* `Scan`: Calls `Orchestrator::Search` and populates the DuckDB `result` vector.
+* `InitializeScan`: Translates DuckDB query vector into a format suitable for `Coordinator::Search` and sets up `LmDiskannScanState`.
+* `Scan`: Calls `Coordinator::Search` and populates the DuckDB `result` vector.
 * Methods like `GetConstraintViolationMessage` (if simple).
 
-### Functionality Moving to `diskann::core::Orchestrator`:
+### Functionality Moving to `diskann::core::Coordinator`:
 * Ownership of `IndexConfig` (after initial setup by `LmDiskannIndex`).
 * Ownership and lifecycle management of `IGraphManager`, `IStorageManager`, `ISearcher`.
 * High-level logic for `Append`, `Insert`, `Delete` (coordinating the managers).
@@ -206,13 +206,13 @@ The current `LmDiskannIndex` class will be significantly slimmed down.
 * Management of `is_dirty_` flag.
 * Vacuum logic (coordinating `IStorageManager`).
 * `GetInMemorySize`, `GetStorageInfo` (delegating to managers).
-* The core state like `graph_entry_point_ptr_`, `delete_queue_head_ptr_` will be managed by `Orchestrator` or its delegates (`GraphManager`, `StorageManager`).
+* The core state like `graph_entry_point_ptr_`, `delete_queue_head_ptr_` will be managed by `Coordinator` or its delegates (`GraphManager`, `StorageManager`).
 
 ### Interaction Example: `Insert`
 1.  `duckdb::LmDiskannIndex::Insert(lock, data_chunk, row_ids)` is called by DuckDB.
 2.  It extracts the vector and `row_id` from `data_chunk`.
-3.  It calls `orchestrator_->Insert(vector_ptr, row_id)`.
-4.  `diskann::core::Orchestrator::Insert` then:
+3.  It calls `coordinator_->Insert(vector_ptr, row_id)`.
+4.  `diskann::core::Coordinator::Insert` then:
     * Uses `ISearcher` (or `IGraphManager` with search capabilities) to find candidate neighbors for the new vector.
     * Uses `IGraphManager` to:
         * Allocate a new node for `row_id`.
@@ -244,11 +244,11 @@ src/
 
 ├── diskann/
 
-│   ├── core/                   // Core logic (Orchestrator, GraphManager, StorageManager, Searcher, interfaces IGraphManager etc.)
+│   ├── core/                   // Core logic (Coordinator, GraphManager, StorageManager, Searcher, interfaces IGraphManager etc.)
 
-│   │   ├── Orchestrator.hpp
+│   │   ├── Coordinator.hpp
 
-│   │   ├── Orchestrator.cpp
+│   │   ├── Coordinator.cpp
 
 │   │   ├── IGraphManager.hpp
 
@@ -315,10 +315,10 @@ src/
 
 ## 7. Key Changes to Existing Files (Summary)
 
-* **`LmDiskannIndex.hpp/.cpp`**: Major refactoring. Becomes thinner, delegating most logic to `Orchestrator`.
-* **`Orchestrator.hpp/.cpp`**: Skeleton filled out to become the central core logic coordinator.
+* **`LmDiskannIndex.hpp/.cpp`**: Major refactoring. Becomes thinner, delegating most logic to `Coordinator`.
+* **`Coordinator.hpp/.cpp`**: Skeleton filled out to become the central core logic coordinator.
 * **`GraphManager.hpp/.cpp`**: Enhanced to implement `IGraphManager`. Takes on more responsibilities from current `LmDiskannIndex` and `GraphOperations` related to graph structure, node data, and entry points. `NodeAccessors` likely remains a helper class used by `GraphManager`.
-* **`GraphOperations.hpp/.cpp`**: Much of its logic (like `RobustPrune`, `InsertNode`'s graph manipulation parts, entry point selection) will be merged into `GraphManager` or `Orchestrator`. This class might be deprecated or significantly reduced.
+* **`GraphOperations.hpp/.cpp`**: Much of its logic (like `RobustPrune`, `InsertNode`'s graph manipulation parts, entry point selection) will be merged into `GraphManager` or `Coordinator`. This class might be deprecated or significantly reduced.
 * **`StorageManager.hpp/.cpp`**: Changed from free functions to a class implementing `IStorageManager`. Manages `FixedSizeAllocator`, metadata I/O, main graph file I/O, and delete queue.
 * **`Searcher.hpp/.cpp`**: Implements `ISearcher`, contains beam search logic.
 * **`index_config.hpp/.cpp`**: Remains for `LmDiskannConfig`, `NodeLayoutOffsets`, parsing, validation. May move to `diskann::common` or stay in `diskann::core`.
@@ -328,8 +328,8 @@ src/
 ## 8. Next Steps
 
 1.  **Define Interfaces**: Start by creating the `.hpp` files for `IShadowStorageService`, `IStorageManager`, `IGraphManager`, `ISearcher`.
-2.  **Implement Core Components**: Begin implementing `Orchestrator`, `StorageManager`, `GraphManager`, `Searcher` based on these interfaces and the refactored logic from `LmDiskannIndex`.
-3.  **Refactor `LmDiskannIndex`**: Modify it to use the `Orchestrator` and other new components.
+2.  **Implement Core Components**: Begin implementing `Coordinator`, `StorageManager`, `GraphManager`, `Searcher` based on these interfaces and the refactored logic from `LmDiskannIndex`.
+3.  **Refactor `LmDiskannIndex`**: Modify it to use the `Coordinator` and other new components.
 4.  **Implement `DiskannShadowStorageService`**.
 5.  **Update CMakeLists.txt**: Ensure all new `.cpp` files are compiled and linked correctly.
 6.  **Testing**: Thorough unit and integration testing will be crucial at each step.

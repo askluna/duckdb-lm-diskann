@@ -4,21 +4,21 @@ Version: 1.8
 
 Date: 2025-05-07
 
-**Abstract:** This document specifies the C++ architecture for the DiskANN DuckDB extension, adopting a **C++20 modules-first approach** for all custom logic. Core indexing components reside in modules within the `diskann` namespace (e.g., `diskann.Orchestrator`). DuckDB-facing integration components also reside in modules, typically within the `duckdb` namespace (e.g., `duckdb.DiskannIndex`), which `#include` DuckDB's traditional headers and `import` `diskann` core modules. The main extension entry point (`diskann_extension.cpp`) remains a traditional C++ file, using `#include` for DuckDB and `import` for the primary DuckDB-facing module. A strict unidirectional dependency is enforced: `diskann` core/common/store modules must not depend on `duckdb` namespace modules. Interactions required by the `diskann` core with DuckDB-specific resources (e.g., for shadow table operations) are abstracted via interfaces like `diskann::store::IShadowStorageService`, defined in `diskann/store/` modules. Implementations of these interfaces that depend on DuckDB are provided by modules in `diskann/duckdb/`. This specification details namespace organization, PascalCase for module interface filenames defining classes (e.g., `Orchestrator.cppm`), and component characteristics.
+**Abstract:** This document specifies the C++ architecture for the DiskANN DuckDB extension, adopting a **C++20 modules-first approach** for all custom logic. Core indexing components reside in modules within the `diskann` namespace (e.g., `diskann.Coordinator`). DuckDB-facing integration components also reside in modules, typically within the `duckdb` namespace (e.g., `duckdb.DiskannIndex`), which `#include` DuckDB's traditional headers and `import` `diskann` core modules. The main extension entry point (`diskann_extension.cpp`) remains a traditional C++ file, using `#include` for DuckDB and `import` for the primary DuckDB-facing module. A strict unidirectional dependency is enforced: `diskann` core/common/store modules must not depend on `duckdb` namespace modules. Interactions required by the `diskann` core with DuckDB-specific resources (e.g., for shadow table operations) are abstracted via interfaces like `diskann::store::IShadowStorageService`, defined in `diskann/store/` modules. Implementations of these interfaces that depend on DuckDB are provided by modules in `diskann/duckdb/`. This specification details namespace organization, PascalCase for module interface filenames defining classes (e.g., `Coordinator.cppm`), and component characteristics.
 
-### 1. Fundamental Design Principle: The `diskann::Orchestrator` Module
+### 1. Fundamental Design Principle: The `diskann::Coordinator` Module
 
-The `diskann::Orchestrator` module (exporting the `diskann::Orchestrator` class) is the central architectural component for core ANN logic. It is instantiated and managed by the `duckdb::DiskannIndex` class (exported from the `duckdb.DiskannIndex` module), which serves as the primary integration point with the DuckDB system.
+The `diskann::Coordinator` module (exporting the `diskann::Coordinator` class) is the central architectural component for core ANN logic. It is instantiated and managed by the `duckdb::DiskannIndex` class (exported from the `duckdb.DiskannIndex` module), which serves as the primary integration point with the DuckDB system.
 
 **1.1. `duckdb.DiskannIndex` Module Responsibilities (exporting `duckdb::DiskannIndex` class):**
 
 - Implementation of the DuckDB `Index` interface. This module will `#include` necessary DuckDB headers.
 - Interaction with DuckDB systemic components (catalog, storage, etc.) via included DuckDB APIs.
-- Translation of DuckDB data structures and requests into invocations on the imported `diskann::Orchestrator` class.
+- Translation of DuckDB data structures and requests into invocations on the imported `diskann::Coordinator` class.
 - Creation and injection of concrete implementations for platform-specific interfaces (e.g., `diskann::store::IShadowStorageService`) required by the `diskann` core. These implementations will also be modules within the `duckdb` namespace (e.g., `duckdb.DiskannShadowStorageService`).
-- Lifecycle management of the `diskann::Orchestrator` instance and its direct dependencies.
+- Lifecycle management of the `diskann::Coordinator` instance and its direct dependencies.
 
-**1.2. `diskann.Orchestrator` Module Responsibilities (exporting `diskann::Orchestrator` class):**
+**1.2. `diskann.Coordinator` Module Responsibilities (exporting `diskann::Coordinator` class):**
 
 - **State Management:** Owns and controls the DiskANN graph's state (entry points, metadata, configuration, on-disk paths). (Primarily **Stateful**).
 - **Core Operations:** Implements high-level indexing operations (build, search, insert, update, delete), including shadow store interactions via injected services.
@@ -42,7 +42,7 @@ The `diskann::Orchestrator` module (exporting the `diskann::Orchestrator` class)
   - `import`s the primary integration module (e.g., `import duckdb.DiskannIndex;`) to register the index.
 - **`diskann/duckdb/`** (Components are C++20 modules, typically in `duckdb` namespace. They `#include` DuckDB headers and `import diskann` modules.)
   - **`DiskannIndex.cppm`:** (Module e.g., `duckdb.DiskannIndex`, exports class `DiskannIndex`)
-    - **Nature:** **Stateful**. Primary DuckDB interface logic. Instantiates and injects dependencies like `duckdb.DiskannShadowStorageService` into `diskann.Orchestrator`.
+    - **Nature:** **Stateful**. Primary DuckDB interface logic. Instantiates and injects dependencies like `duckdb.DiskannShadowStorageService` into `diskann.Coordinator`.
   - **`DiskannShadowStorageService.cppm`:** (Module e.g., `duckdb.DiskannShadowStorageService`, exports class `DiskannShadowStorageService` implementing `diskann::store::IShadowStorageService`)
     - **Nature:** **Stateful**. Provides DuckDB-backed implementation for shadow storage operations using DuckDB APIs.
   - **`DiskannScanState.cppm`:** (Module e.g., `duckdb.DiskannScanState`, exports class `DiskannScanState`)
@@ -50,7 +50,7 @@ The `diskann::Orchestrator` module (exporting the `diskann::Orchestrator` class)
   - **`DiskannBindData.cppm`, `DiskannCreateIndexInfo.cppm`:** (Modules exporting structs/classes)
     - **Nature:** Data containers; **Immutable** once populated.
 - **`diskann/core/`, `diskann/common/`, `diskann/store/`** (Components are C++20 modules in the `diskann` namespace. These modules **do not** depend on `duckdb` namespace modules or DuckDB headers.)
-  - **`Orchestrator.cppm`:** (Module `diskann.Orchestrator`, exports class `Orchestrator`)
+  - **`Coordinator.cppm`:** (Module `diskann.Coordinator`, exports class `Coordinator`)
     - **Nature:** **Stateful**. Imports `diskann.IStorageManager`, `diskann.IGraphManager`, `diskann.ISearcher`, `diskann.IndexConfig`, and `diskann.store.IShadowStorageService` (interface).
   - **`IndexConfig.cppm`:** (Module `diskann.IndexConfig`, exports `IndexConfig`)
     - **Nature:** Data container; ideally **Immutable**.
@@ -83,7 +83,7 @@ Module interface units (`.cppm`) declare exported entities. Implementations can 
 
 #### 2.4. Distinction between Classes, Structs, and Functional Approaches (within Modules):
 
-- ***\*Exported Classes from Modules (Stateful Services & Complex Logic):\**** Components like `diskann::Orchestrator` (from `diskann.Orchestrator` module) and `diskann::StorageManager` (from `diskann.StorageManager` module) encapsulate significant state and behavior. Their public contracts are defined by C++ classes, often implementing interfaces (like `diskann::IStorageManager` exported from its own module or `diskann.storage_interfaces`).
+- ***\*Exported Classes from Modules (Stateful Services & Complex Logic):\**** Components like `diskann::Coordinator` (from `diskann.Coordinator` module) and `diskann::StorageManager` (from `diskann.StorageManager` module) encapsulate significant state and behavior. Their public contracts are defined by C++ classes, often implementing interfaces (like `diskann::IStorageManager` exported from its own module or `diskann.storage_interfaces`).
 - ***\*Exported Interfaces from Modules (Contracts):\**** Abstract interfaces like `diskann::IStorageManager` and `diskann::store::IShadowStorageService` are defined and `export`ed from their respective modules to establish contracts for services. This enables polymorphism and dependency injection across module boundaries.
 - ***\*Exported Structs from Modules (Data Aggregation):\**** Used for data aggregation (e.g., `diskann::Node` exported from `diskann.types` module). Typically ***\*Immutable\**** post-initialization or represent data snapshots.
 - ***\*Exported Free Functions from Modules (Stateless Operations & Pure Computations):\**** Grouped in dedicated modules (e.g., functions in `diskann.distance` module, utilities in `diskann.utils` module). These are appropriate for ***\*Stateless\**** utilities and ***\*Pure Functions\****, promoting reusability and testability.
@@ -106,14 +106,14 @@ The dependency flow is critical: `diskann_extension.cpp` (traditional) -> `duckd
   - `(m)->` `duckdb.DiskannIndex` (module exported from `DiskannIndex.cppm`)
 - **`duckdb.DiskannIndex`** (module from `DiskannIndex.cppm`)
   - `(i)->` DuckDB Core Library Headers (for Index API, types, context, etc.)
-  - `(m)->` `diskann.Orchestrator`
+  - `(m)->` `diskann.Coordinator`
   - `(m)->` `diskann.IndexConfig`
   - `(m)->` `duckdb.DiskannShadowStorageService` (module providing concrete `IShadowStorageService`)
-  - Injects `DiskannShadowStorageService` instance (as `std::unique_ptr<diskann::store::IShadowStorageService>`) into `diskann.Orchestrator`.
+  - Injects `DiskannShadowStorageService` instance (as `std::unique_ptr<diskann::store::IShadowStorageService>`) into `diskann.Coordinator`.
 - **`duckdb.DiskannShadowStorageService`** (module from `DiskannShadowStorageService.cppm`, implements `diskann::store::IShadowStorageService`)
   - `(i)->` DuckDB Core Library Headers (for SQL execution, `ClientContext`, transactions, etc.)
   - `(m)->` `diskann.store.IShadowStorageService` (to import the interface it implements)
-- **`diskann.Orchestrator`** (module)
+- **`diskann.Coordinator`** (module)
   - `(m)->` `diskann.IStorageManager` (or the module exporting this interface)
   - `(m)->` `diskann.IGraphManager` (or the module exporting this interface)
   - `(m)->` `diskann.ISearcher` (or the module exporting this interface)
@@ -135,7 +135,7 @@ The directory structure is organized to reflect the modular design and namespace
 src/
 ├── diskann/
 │   ├── core/                   // Core logic modules (namespace diskann)
-│   │   ├── Orchestrator.cppm
+│   │   ├── Coordinator.cppm
 │   │   ├── IndexConfig.cppm
 │   │   ├── distance.cppm
 │   │   ├── IStorageManager.cppm
@@ -182,12 +182,12 @@ This "modules-first" architecture, with strict unidirectional dependencies and p
 These principles guide the implementation of the modular architecture:
 
 - **Interfaces for Services and Platform Dependencies:** Abstract interfaces (e.g., `diskann::IStorageManager`, `diskann::store::IShadowStorageService`) are defined and `export`ed from their respective `diskann` modules. These form the contracts for service implementations.
-- ***\*Dependency Injection (Constructor Injection):\**** The `duckdb.DiskannIndex` module is responsible for instantiating concrete service implementations (like `duckdb.DiskannShadowStorageService`) and injecting them (as `std::unique_ptr` to the interface type) into the `diskann.Orchestrator` module via its constructor. This pattern is used for all significant service dependencies.
+- ***\*Dependency Injection (Constructor Injection):\**** The `duckdb.DiskannIndex` module is responsible for instantiating concrete service implementations (like `duckdb.DiskannShadowStorageService`) and injecting them (as `std::unique_ptr` to the interface type) into the `diskann.Coordinator` module via its constructor. This pattern is used for all significant service dependencies.
 - **No Reverse Dependencies:** `diskann` (core/common/store) modules **must not** `import` or `#include` from `diskann/duckdb/` modules or depend directly on DuckDB-specific types or APIs. All such interactions are mediated through the `diskann::store` interfaces.
 - ***\*Explicit Ownership:\**** Smart pointers (`std::unique_ptr` for exclusive ownership, `std::shared_ptr` where shared ownership is explicitly required) are used to manage the lifetime of dynamically allocated objects and injected dependencies.
 - ***\*Error Handling:\**** Exceptions are used for unrecoverable errors. `std::optional` or `std::expected` (C++23 or library equivalent) are preferred for recoverable errors or optional return values to make error paths explicit. Custom error types may be exported from a common `diskann` module if needed.
-- ***\*Concurrency Management:\**** Stateful modules, particularly those involved in I/O (`diskann.StorageManager`) or shared graph structures (`diskann.GraphManager`), must be designed for thread safety if concurrent access is anticipated. Concurrency control mechanisms are encapsulated within these modules or coordinated by `diskann.Orchestrator`.
-- ***\*Lifecycle Management:\**** `duckdb.DiskannIndex` manages the lifecycle of the `diskann.Orchestrator` instance. The `Orchestrator` module, in turn, manages the lifecycle of the core service components it instantiates or receives as dependencies.
+- ***\*Concurrency Management:\**** Stateful modules, particularly those involved in I/O (`diskann.StorageManager`) or shared graph structures (`diskann.GraphManager`), must be designed for thread safety if concurrent access is anticipated. Concurrency control mechanisms are encapsulated within these modules or coordinated by `diskann.Coordinator`.
+- ***\*Lifecycle Management:\**** `duckdb.DiskannIndex` manages the lifecycle of the `diskann.Coordinator` instance. The `Coordinator` module, in turn, manages the lifecycle of the core service components it instantiates or receives as dependencies.
 
 ### 6. Further Organizational and Planning Considerations
 
@@ -202,7 +202,7 @@ Successful implementation of this modules-first architecture requires careful at
 3. **Shadow Implementation Integration:** The `diskann.StorageManager` module will exclusively use the injected `diskann::store::IShadowStorageService` interface for all transactional operations related to `diskann_store.duckdb` (e.g., managing shadow blocks, lookup tables, metadata).
 4. **Build System (CMake):** This is a paramount consideration. The CMake configuration must:
    - Compile all `.cppm` files as C++20 module interface units (or implementation units where appropriate).
-   - Correctly manage inter-module dependencies (e.g., `diskann.Orchestrator` `import`s `diskann.IStorageManager`) to ensure Binary Module Interfaces (BMIs) are built in the correct order and are available to importers.
+   - Correctly manage inter-module dependencies (e.g., `diskann.Coordinator` `import`s `diskann.IStorageManager`) to ensure Binary Module Interfaces (BMIs) are built in the correct order and are available to importers.
    - Handle the linkage of the final extension, incorporating the traditionally compiled `diskann_extension.cpp` with the compiled modules.
    - This necessitates a modern CMake version (e.g., 3.28+ recommended for best support) and a compiler toolchain (GCC, Clang, MSVC) with robust and compatible C++20 module support. Thorough testing of the build process across target platforms will be essential.
 5. **On-Disk Format Versioning:** Versioning applies to `graph.lmd` (managed by `diskann.StorageManager`) and the schema/data within `diskann_store.duckdb` (managed via `diskann.store.IShadowStorageService` and its `duckdb` namespace implementation). Mechanisms for checking and migrating formats must be considered.
