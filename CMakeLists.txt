@@ -25,6 +25,19 @@ project(${TARGET_NAME})
 find_package(hwy CONFIG REQUIRED)
 # find_package(simsimd CONFIG REQUIRED)
 
+# For SimSIMD (header-only via vcpkg)
+find_path(SIMSIMD_INCLUDE_DIR "simsimd/simsimd.h"
+    HINTS ${VCPKG_INSTALL_INFO_DIR}/../include NO_DEFAULT_PATH) # More robust find
+if(NOT SIMSIMD_INCLUDE_DIR)
+    message(FATAL_ERROR "SimSIMD include directory not found. Check vcpkg installation.")
+endif()
+message(STATUS "Found SimSIMD include directory: ${SIMSIMD_INCLUDE_DIR}")
+
+# Add SimSIMD include directory globally for all sources in this project
+# Or, more targetedly to specific extension targets if preferred.
+# For simplicity with DuckDB extensions, adding it to include_directories often works.
+include_directories(${SIMSIMD_INCLUDE_DIR})
+
 include_directories(src/include)
 
 set(EXTENSION_SOURCES src/lm_diskann_extension.cpp)
@@ -33,8 +46,11 @@ add_subdirectory(src/lm_diskann)
 # Build the static extension
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 
-target_link_libraries(${EXTENSION_NAME} hwy::hwy simsimd)
-build_loadable_extension(${TARGET_NAME} "hwy::hwy simsimd" ${EXTENSION_SOURCES})
+# Link hwy::hwy to the static extension
+target_link_libraries(${EXTENSION_NAME} hwy::hwy)
+
+# Build the loadable extension, passing hwy::hwy as a library
+build_loadable_extension(${TARGET_NAME} "hwy::hwy" ${EXTENSION_SOURCES})
 
 install(
   TARGETS ${EXTENSION_NAME}
