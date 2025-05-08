@@ -22,6 +22,9 @@
 namespace diskann {
 namespace core {
 
+// Forward declaration for GetRandomNodeID
+common::row_t GetRandomNodeID(::duckdb::AttachedDatabase &db, ::duckdb::FixedSizeAllocator &allocator);
+
 // --- Storage Management Implementation ---
 // NOTE: These functions currently act as placeholders or interfaces.
 // The actual implementation using the in-memory map resides within
@@ -69,7 +72,7 @@ void DeleteNodeFromMapAndFreeBlock(::duckdb::row_t row_id, ::duckdb::AttachedDat
 // Pins block using IndexPointer.
 ::duckdb::BufferHandle GetNodeBuffer(common::IndexPointer node_ptr, ::duckdb::AttachedDatabase &db,
                                      ::duckdb::FixedSizeAllocator &allocator, bool write_lock) {
-	if (!node_ptr.IsValid()) { // Assuming common::IndexPointer is duckdb::IndexPointer which has IsValid
+	if (node_ptr.Get() == 0) { // Corrected IsValid() check
 		throw ::duckdb::IOException("Invalid node pointer provided to GetNodeBuffer.");
 	}
 	// V2 NOTE: This function will change significantly. It will use StorageManager's internal cache
@@ -86,7 +89,7 @@ void DeleteNodeFromMapAndFreeBlock(::duckdb::row_t row_id, ::duckdb::AttachedDat
 void PersistMetadata(common::IndexPointer metadata_ptr, ::duckdb::AttachedDatabase &db,
                      ::duckdb::FixedSizeAllocator &allocator, const LmDiskannMetadata &metadata) {
 
-	if (!metadata_ptr.IsValid()) {
+	if (metadata_ptr.Get() == 0) { // Corrected IsValid() check
 		throw ::duckdb::InternalException("Cannot persist LM_DISKANN metadata: metadata pointer is invalid.");
 	}
 	// V2 NOTE: This function will change. Metadata is managed by IShadowStorageService in diskann_store.duckdb.
@@ -169,10 +172,7 @@ void EnqueueDeletion(common::row_t deleted_row_id, common::IndexPointer &delete_
 void ProcessDeletionQueue(common::IndexPointer &delete_queue_head_ptr, ::duckdb::AttachedDatabase &db,
                           ::duckdb::FixedSizeAllocator &allocator, const NodeLayoutOffsets &layout,
                           common::idx_t edge_vector_size_bytes) {
-	// V2 NOTE: Delete queue processing is complex. IShadowStorageService manages the queue data.
-	// StorageManager might be involved if graph.lmd nodes need direct updates (e.g. tombstones, neighbor list cleaning)
-	// based on the processed queue.
-	if (delete_queue_head_ptr.IsValid()) {
+	if (delete_queue_head_ptr.Get() != 0) { // Corrected IsValid() check
 		throw common::NotImplementedException("ProcessDeletionQueue: Processing deferred deletions is not "
 		                                      "implemented fully and needs V2 design.");
 	}
@@ -181,19 +181,11 @@ void ProcessDeletionQueue(common::IndexPointer &delete_queue_head_ptr, ::duckdb:
 // Gets a valid entry point row_id (persisted or random - placeholder).
 common::row_t GetEntryPointRowId(common::IndexPointer graph_entry_point_ptr, ::duckdb::AttachedDatabase &db,
                                  ::duckdb::FixedSizeAllocator &allocator) {
-	// V2 NOTE: The graph_entry_point_ptr (from LmDiskannMetadata via IShadowStorageService) points to a block in
-	// graph.lmd. To get row_id, read that block's header (NodeBlockHeader.row_id).
-	if (graph_entry_point_ptr.IsValid()) {
-		// Placeholder: Reading block and header would happen here.
-		// For now, to avoid GetNodeBuffer call:
-		// ::duckdb::Printer::Warning("GetEntryPointRowId: Cannot get row_id from pointer yet (V2 requires reading block
-		// header).");
+	if (graph_entry_point_ptr.Get() != 0) { // Corrected IsValid() check
 		std::cerr << "Warning: GetEntryPointRowId: Cannot get row_id from pointer yet (V2 requires reading block header)."
 		          << std::endl;
-		return common::NumericLimits<common::row_t>::Maximum(); // Placeholder indicating valid pointer but unknown rowid
-		                                                        // for now
+		return common::NumericLimits<common::row_t>::Maximum();
 	}
-	// Fallback: Get a random node ID - V2 would query IShadowStorageService for a random valid mapping.
 	return GetRandomNodeID(db, allocator);
 }
 

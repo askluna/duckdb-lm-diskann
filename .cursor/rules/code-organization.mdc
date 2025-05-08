@@ -1,0 +1,59 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# DiskANN DuckDB Extension: C++20 Module Architecture Plan
+
+This rule outlines the C++20 modules-first architecture for the DiskANN DuckDB extension
+
+## Overview
+
+The architecture uses C++20 modules for all custom logic, except for the main extension entry point. It defines two primary namespaces:
+
+* `diskann::core`: For core DiskANN logic, residing in `src/lm_diskann/core`
+* `diskann:common`: For common types, residing in `src/lm_diskann/common`.  Has type alias [duckdb_types.hpp](mdc:src/lm_diskann/common/duckdb_types.hpp)
+* `diskann:db`: For modules directly interfacing with DuckDB, residing `src/lm_diskann/db/`
+* `diskann:store`: For loosly coupled acces to duckdb storage interface required by `::core` and initatied by `::db`
+
+## Dependency Flow
+
+The dependency flow is strictly unidirectional, as described in the architectural plan:
+
+db => core
+db => store
+store => core
+common => core
+common => db
+diskann_extension.cpp => db
+
+## Explanation of `src/lm_diskann` directory
+*   **`src/lm_diskann/CMakeLists.txt`**:
+    *   This is a CMake build script. It defines how the source code within the `lm_diskann` directory and its subdirectories should be compiled and linked as part of the larger project. It likely specifies source files, include directories, and dependencies for the `lm_diskann` module.
+
+*   **`src/lm_diskann/common/`**: This directory seems to contain common definitions and utilities used across the `lm_diskann` module.
+    *   **`ann.hpp`**: Likely contains common data structures, constants, or helper functions related to Approximate Nearest Neighbor (ANN) search, which is the core functionality of DiskANN.
+    *   **`duckdb_types.hpp`**: Probably defines or includes type definitions that are specific to DuckDB, facilitating the integration of `lm_diskann` with DuckDB's type system.
+
+*   **`src/lm_diskann/core/`**: This directory appears to house the core logic and implementation of the DiskANN algorithm.
+    *   **`CMakeLists.txt`**: A build script specific to the `core` components, likely defining how these files are compiled.
+    *   **`Coordinator.hpp` / `Coordinator.cpp`**: Might manage the overall process of index building, searching, and other high-level operations within the DiskANN implementation. It could coordinate various components like graph management, search, and storage.
+    *   **`distance.hpp` / `distance.cpp`**: Contains implementations for calculating distances between vectors (e.g., L2, cosine similarity), which is fundamental for nearest neighbor search.
+    *   **`GraphManager.hpp` / `GraphManager.cpp`**: Responsible for building, managing, and navigating the graph structure that DiskANN uses for efficient search.
+    *   **`IGraphManager.hpp`**: An interface (abstract class) for `GraphManager`, allowing for different graph management strategies or easier testing.
+    *   **`index_config.hpp` / `index_config.cpp`**: Manages the configuration parameters for the DiskANN index, such as graph degree, search list size, beam width, etc.
+    *   **`ISearcher.hpp`**: An interface for the search component.
+    *   **`Searcher.hpp` / `Searcher.cpp`**: Implements the actual search algorithm on the DiskANN graph to find approximate nearest neighbors.
+    *   **`IStorageManager.hpp`**: An interface for managing the storage of index data.
+    *   **`StorageManager.hpp` / `StorageManager.cpp`**: Handles the reading and writing of the DiskANN index data (vectors, graph structure) to and from disk or memory.
+    *   **`ternary_quantization.hpp`**: Likely contains code for ternary quantization, a technique to compress vectors and reduce memory/storage footprint, potentially speeding up distance calculations.
+
+*   **`src/lm_diskann/db/`**: This directory seems to be responsible for integrating the `lm_diskann` functionality as an index within the DuckDB database system.
+    *   **`LmDiskannIndex.hpp` / `LmDiskannIndex.cpp`**: Defines the custom index type for DuckDB that uses the `lm_diskann` library. This would include logic for creating, inserting into, searching, and managing the lifecycle of a DiskANN index within DuckDB.
+    *   **`LmDiskannScanState.hpp`**: Likely holds the state for a scan operation on an `LmDiskannIndex`, managing cursors, current results, and other scan-related information during query execution.
+
+*   **`src/lm_diskann/store/`**: This directory appears to be focused on an abstraction layer for storage, possibly for more advanced or flexible storage mechanisms.
+    *   **`IShadowStorageService.hpp`**: An interface for a "shadow storage service". This could be related to mechanisms for durable storage, caching, or versioning of the index data, potentially allowing for updates or persistence strategies that are decoupled from the core index logic. The term "shadow" might imply a secondary or backup storage system, or a copy-on-write mechanism.
+
+
+

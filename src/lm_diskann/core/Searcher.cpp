@@ -73,7 +73,7 @@ void PerformSearch(const float *query_vector_ptr, common::idx_t k_neighbors, com
 
 	// TODO: Check visibility/tombstone for entry point via IShadowStorageService?
 	if (entry_point_rowid == common::NumericLimits<common::row_t>::Maximum() ||
-	    !entry_point_ptr.IsValid()) { // Use IsValid() for common::IndexPointer
+	    entry_point_ptr.Get() == 0) { // Corrected IsValid() check
 		return;
 	}
 

@@ -79,8 +79,7 @@ void Coordinator::Search(const float *query_vector, common::idx_t k_neighbors,
 	// Determine the actual search list size (L_search)
 	common::idx_t L_search = (search_list_size > 0) ? search_list_size : config_.l_search;
 	if (L_search < k_neighbors) {
-		// Warn or adjust? L_search should generally be >= k
-		// std::cout << "Warning: L_search (" << L_search << ") < k (" <<
+		// Warn or adjust? L_search (" << L_search << ") < k (" <<
 		// k_neighbors << ")" << std::endl;
 		L_search = k_neighbors;
 	}
@@ -122,7 +121,7 @@ void Coordinator::Insert(const float *data_vector, size_t data_dim, common::row_
 	try {
 		// 1. Allocate node and store vector data (via GraphManager)
 		node_added = graph_manager_->AddNode(label, data_vector, config_.dimensions, new_node_ptr);
-		if (!node_added || !new_node_ptr.IsValid()) {
+		if (!node_added || new_node_ptr.Get() == 0) {
 			throw std::runtime_error("Failed to add node via GraphManager.");
 		}
 
