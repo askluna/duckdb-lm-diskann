@@ -45,11 +45,12 @@ public:
   // Prunes a list of candidate neighbors for a node and updates its
   // connections.
   virtual void RobustPrune(
-      common::IndexPointer
-          node_to_connect, // The node whose neighbors are being pruned
-      const float *node_vector_data, // Vector data for node_to_connect
-      std::vector<common::row_t>
-          &candidate_row_ids, // In/Out: candidates, pruned to final neighbors
+      common::IndexPointer node_to_connect, // The node whose neighbors are
+                                            // being pruned
+      const float *node_vector_data,        // Vector data for node_to_connect
+      std::vector<common::row_t> &candidate_row_ids, // In/Out: candidates,
+                                                     // pruned to final
+                                                     // neighbors
       const LmDiskannConfig &config
       // Potentially needs access to other node vectors via this interface or
       // another service

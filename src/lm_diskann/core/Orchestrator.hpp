@@ -9,6 +9,7 @@
 
 namespace duckdb {
 class ClientContext;
+class IndexStorageInfo;
 } // namespace duckdb
 
 // Forward declare types that might be used in method signatures
@@ -65,6 +66,8 @@ public:
   void InitializeIndex(common::idx_t estimated_cardinality);
 
   common::idx_t GetInMemorySize() const;
+
+  ::duckdb::IndexStorageInfo GetIndexStorageInfo();
 
   // Other potential methods
   // void Consolidate();

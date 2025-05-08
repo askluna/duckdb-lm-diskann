@@ -1,9 +1,9 @@
 #pragma once
 
 // Include relevant DuckDB type headers
+#include "duckdb/common/random_engine.hpp"          // For RandomEngine
 #include "duckdb/common/types.hpp"                  // For idx_t, row_t
 #include "duckdb/execution/index/index_pointer.hpp" // For IndexPointer
-
 namespace diskann {
 namespace common {
 
@@ -18,6 +18,12 @@ using row_t = ::duckdb::row_t;
 
 // duckdb::IndexPointer is a specific struct used by DuckDB for block pointers.
 using IndexPointer = ::duckdb::IndexPointer;
+
+template <typename T> using NumericLimits = ::duckdb::NumericLimits<T>;
+
+using RandomEngine = ::duckdb::RandomEngine;
+
+using NotImplementedException = ::duckdb::NotImplementedException;
 
 // You can add other common custom types here if needed, e.g.:
 // struct Candidate {

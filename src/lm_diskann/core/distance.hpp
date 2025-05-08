@@ -4,9 +4,7 @@
  */
 #pragma once
 
-#include "duckdb/common/types.hpp" // For idx_t
-#include "duckdb/common/types/vector.hpp"
-#include "duckdb/storage/data_pointer.hpp" // For const_data_ptr_t
+#include "../common/types.hpp"
 #include "index_config.hpp" // Include config for TernaryPlanesView and LmDiskannMetricType
 
 #include <cstdint>
@@ -34,7 +32,7 @@ namespace core {
  * @return The calculated distance.
  */
 float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
-                                idx_t dimensions,
+                                common::idx_t dimensions,
                                 LmDiskannMetricType metric_type);
 
 // --- Distance / Similarity Calculation --- //
@@ -53,7 +51,7 @@ float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
  */
 float ComputeApproxSimilarityTernary(const float *query_float_ptr,
                                      const TernaryPlanesView &neighbor_planes,
-                                     idx_t dimensions);
+                                     common::idx_t dimensions);
 
 /**
  * @brief Computes the exact distance between two vectors based on the
@@ -106,7 +104,7 @@ bool CompressVectorForEdge(const float *input_vector,
  */
 template <typename T>
 void ConvertToFloat(const T *input_vector, float *output_vector,
-                    idx_t dimensions);
+                    common::idx_t dimensions);
 
 // Explicit instantiation for int8_t needed if definition is in .cpp
 // extern template void ConvertToFloat<int8_t>(const int8_t* input_vector,

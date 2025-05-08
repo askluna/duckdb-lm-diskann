@@ -582,11 +582,18 @@ void LmDiskannIndex::Delete(::duckdb::IndexLock &lock,
  * @return IndexStorageInfo containing allocator details.
  */
 ::duckdb::IndexStorageInfo LmDiskannIndex::GetStorageInfo(bool get_buffers) {
-  ::duckdb::IndexStorageInfo info;
-  info.name = name;
-  if (node_manager_) {
-    info.allocator_infos.push_back(node_manager_->GetAllocator().GetInfo());
+  if (!orchestrator_) {
+    throw ::duckdb::InternalException(
+        "Orchestrator not initialized in GetStorageInfo");
+    // Or return an empty/invalid info struct?
+    // ::duckdb::IndexStorageInfo empty_info;
+    // empty_info.name = name;
+    // return empty_info;
   }
+  // Delegate to orchestrator
+  auto info = orchestrator_->GetIndexStorageInfo();
+  // Ensure the index name from LmDiskannIndex is set
+  info.name = this->name;
   return info;
 }
 
