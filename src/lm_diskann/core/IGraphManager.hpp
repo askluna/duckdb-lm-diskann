@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../common/types.hpp"
+#include "../common/ann.hpp"
+#include "../common/duckdb_types.hpp"
 #include "index_config.hpp" // For LmDiskannConfig
 
 #include <memory> // For unique_ptr if implementations return it
@@ -56,6 +57,9 @@ class IGraphManager {
 	virtual common::IndexPointer GetEntryPointPointer() const = 0;
 	virtual common::row_t GetEntryPointRowId() const = 0;
 
+	// Selects an entry point for a search operation.
+	virtual common::row_t SelectEntryPointForSearch(common::RandomEngine &engine) = 0;
+
 	// Handles the logical deletion of a node (e.g., removing from consideration
 	// as entry point).
 	virtual void HandleNodeDeletion(common::row_t row_id) = 0;
@@ -72,6 +76,14 @@ class IGraphManager {
 
 	// Resets the graph manager to an empty state (e.g., for CommitDrop).
 	virtual void Reset() = 0;
+
+	/**
+	 * @brief Tries to get the IndexPointer for a given row_id.
+	 * @param row_id The row_id to look up.
+	 * @param node_ptr_out Output: The IndexPointer if found, else an invalid pointer.
+	 * @return True if found, false otherwise.
+	 */
+	virtual bool TryGetNodePointer(common::row_t row_id, common::IndexPointer &node_ptr_out) const = 0;
 
 	// Potentially methods to get mutable/const data pointers if
 	// Coordinator/Searcher need direct access virtual common::data_ptr_t

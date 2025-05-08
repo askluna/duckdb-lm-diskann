@@ -87,11 +87,11 @@ core::LmDiskannConfig LmDiskannIndex::ParseOptions(const ::duckdb::case_insensit
 		if (key_upper == core::LmDiskannOptionKeys::METRIC) { // Use core::LmDiskannOptionKeys
 			::duckdb::string metric_str = ::duckdb::StringUtil::Upper(val.ToString());
 			if (metric_str == "L2") {
-				config.metric_type = core::LmDiskannMetricType::L2;
+				config.metric_type = common::LmDiskannMetricType::L2;
 			} else if (metric_str == "COSINE") {
-				config.metric_type = core::LmDiskannMetricType::COSINE;
+				config.metric_type = common::LmDiskannMetricType::COSINE;
 			} else if (metric_str == "IP") {
-				config.metric_type = core::LmDiskannMetricType::IP;
+				config.metric_type = common::LmDiskannMetricType::IP;
 			} else {
 				throw ::duckdb::Exception(::duckdb::ExceptionType::INVALID_INPUT,
 				                          ::duckdb::StringUtil::Format("Unsupported METRIC type '%s' for "

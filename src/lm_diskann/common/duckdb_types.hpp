@@ -7,7 +7,7 @@
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/printer.hpp"
 #include "duckdb/common/random_engine.hpp" // For RandomEngine
-#include "duckdb/common/types.hpp" // For idx_t, row_t, data_ptr_t, const_data_ptr_t
+#include "duckdb/common/types.hpp"         // For idx_t, row_t, data_ptr_t, const_data_ptr_t
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/execution/index/index_pointer.hpp" // For IndexPointer
 #include "duckdb/storage/block.hpp"
@@ -39,7 +39,8 @@ using const_data_ptr_t = ::duckdb::const_data_ptr_t;
 
 // --- Utility and Exception Types --- //
 
-template <typename T> using NumericLimits = ::duckdb::NumericLimits<T>;
+template <typename T>
+using NumericLimits = ::duckdb::NumericLimits<T>;
 
 using RandomEngine = ::duckdb::RandomEngine;
 
@@ -50,6 +51,8 @@ using NotImplementedException = ::duckdb::NotImplementedException;
 // Add other common exception aliases if needed, e.g.:
 // using IOException = ::duckdb::IOException;
 // using InternalException = ::duckdb::InternalException;
+
+// --- LM-DiskANN Specific Enums --- //
 
 // You can add other common custom types here if needed, e.g.:
 // struct Candidate {

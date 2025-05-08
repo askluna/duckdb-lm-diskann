@@ -5,9 +5,10 @@
  */
 #pragma once
 
-#include "../common/types.hpp" // Common types (includes RandomEngine, IndexPointer, block_id_t, etc.)
-#include "IGraphManager.hpp"   // Inherit from the interface
-#include "index_config.hpp"    // For LmDiskannConfig, NodeLayoutOffsets, TernaryPlanesView, MutableTernaryPlanesView
+#include "../common/ann.hpp"
+#include "../common/duckdb_types.hpp"
+#include "IGraphManager.hpp" // Inherit from the interface
+#include "index_config.hpp"  // For LmDiskannConfig, NodeLayoutOffsets, TernaryPlanesView, MutableTernaryPlanesView
 
 // Forward declare interfaces for dependencies
 namespace diskann {
@@ -77,6 +78,7 @@ class GraphManager : public IGraphManager {
 	void SetEntryPoint(common::IndexPointer node_ptr, common::row_t row_id) override;
 	common::IndexPointer GetEntryPointPointer() const override;
 	common::row_t GetEntryPointRowId() const override;
+	common::row_t SelectEntryPointForSearch(common::RandomEngine &engine) override;
 	void HandleNodeDeletion(common::row_t row_id) override;
 	void FreeNode(common::row_t row_id) override;
 	common::idx_t GetNodeCount() const override;
@@ -93,7 +95,7 @@ class GraphManager : public IGraphManager {
 	 * pointer.
 	 * @return True if found, false otherwise.
 	 */
-	bool TryGetNodePointer(common::row_t row_id, common::IndexPointer &node_ptr_out) const;
+	bool TryGetNodePointer(common::row_t row_id, common::IndexPointer &node_ptr_out) const override;
 
 	/**
 	 * @brief Gets a random node ID from the currently managed nodes.
@@ -131,10 +133,6 @@ class GraphManager : public IGraphManager {
 	float CalculateDistanceInternal(const float *vec1, const float *vec2, common::idx_t dimensions) const;
 	float CalculateDistanceInternal(common::IndexPointer node_ptr, const float *query_vec,
 	                                common::idx_t dimensions) const;
-
-	// Helper to convert raw node vector (e.g. int8, fp16) to float32
-	bool ConvertRawVectorToFloat(common::const_data_ptr_t raw_vector_data, float *float_vector_out,
-	                             common::idx_t dimensions) const;
 
 	// Helper to compress a float32 vector for edge storage (e.g. ternary planes)
 	// Returns true on success, false on failure (e.g. unsupported, buffer too

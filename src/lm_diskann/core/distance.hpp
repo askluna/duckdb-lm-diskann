@@ -4,7 +4,8 @@
  */
 #pragma once
 
-#include "../common/types.hpp"
+#include "../common/ann.hpp"
+#include "../common/duckdb_types.hpp"
 #include "index_config.hpp" // Include config for TernaryPlanesView and LmDiskannMetricType
 
 #include <cstdint>
@@ -31,9 +32,8 @@ namespace core {
  * @param metric_type The metric (L2, COSINE, IP) to use.
  * @return The calculated distance.
  */
-float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
-                                common::idx_t dimensions,
-                                LmDiskannMetricType metric_type);
+float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr, common::idx_t dimensions,
+                                common::LmDiskannMetricType metric_type);
 
 // --- Distance / Similarity Calculation --- //
 
@@ -49,8 +49,7 @@ float ComputeExactDistanceFloat(const float *a_ptr, const float *b_ptr,
  * neighbor_planes.dimensions).
  * @return The calculated similarity score.
  */
-float ComputeApproxSimilarityTernary(const float *query_float_ptr,
-                                     const TernaryPlanesView &neighbor_planes,
+float ComputeApproxSimilarityTernary(const float *query_float_ptr, const TernaryPlanesView &neighbor_planes,
                                      common::idx_t dimensions);
 
 /**
@@ -64,8 +63,7 @@ float ComputeApproxSimilarityTernary(const float *query_float_ptr,
  * @return The calculated distance.
  */
 template <typename T_QUERY, typename T_NODE>
-float CalculateDistance(const T_QUERY *query_ptr, const T_NODE *node_vector_ptr,
-                        const LmDiskannConfig &config);
+float CalculateDistance(const T_QUERY *query_ptr, const T_NODE *node_vector_ptr, const LmDiskannConfig &config);
 
 /**
  * @brief Computes the approximate distance using the query vector and a
@@ -79,9 +77,8 @@ float CalculateDistance(const T_QUERY *query_ptr, const T_NODE *node_vector_ptr,
  * @param config The index configuration containing dimensions and metric type.
  * @return The calculated approximate distance.
  */
-float CalculateApproxDistance(
-    const float *query_ptr, ::duckdb::const_data_ptr_t compressed_neighbor_ptr,
-    const LmDiskannConfig &config);
+float CalculateApproxDistance(const float *query_ptr, ::duckdb::const_data_ptr_t compressed_neighbor_ptr,
+                              const LmDiskannConfig &config);
 
 /**
  * @brief Compresses a vector into the TERNARY format for edge storage.
@@ -91,8 +88,7 @@ float CalculateApproxDistance(
  * @param config The index configuration (used for dimensions).
  * @return True if compression was successful, false otherwise.
  */
-bool CompressVectorForEdge(const float *input_vector,
-                           ::duckdb::data_ptr_t output_compressed_vector,
+bool CompressVectorForEdge(const float *input_vector, ::duckdb::data_ptr_t output_compressed_vector,
                            const LmDiskannConfig &config);
 
 /**
@@ -103,8 +99,7 @@ bool CompressVectorForEdge(const float *input_vector,
  * @param dimensions The number of dimensions.
  */
 template <typename T>
-void ConvertToFloat(const T *input_vector, float *output_vector,
-                    common::idx_t dimensions);
+void ConvertToFloat(const T *input_vector, float *output_vector, common::idx_t dimensions);
 
 // Explicit instantiation for int8_t needed if definition is in .cpp
 // extern template void ConvertToFloat<int8_t>(const int8_t* input_vector,

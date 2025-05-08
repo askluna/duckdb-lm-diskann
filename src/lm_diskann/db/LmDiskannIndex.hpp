@@ -17,6 +17,8 @@
 #include "duckdb/storage/table_io_manager.hpp"
 
 // Include headers for the refactored components
+#include "../common/ann.hpp"
+#include "../common/duckdb_types.hpp"
 #include "../core/Coordinator.hpp"
 #include "../core/index_config.hpp"
 #include "LmDiskannScanState.hpp"
@@ -197,7 +199,7 @@ class LmDiskannIndex : public ::duckdb::BoundIndex {
 		return core::GetTernaryEdgeSizeBytes(coordinator_->GetConfig().dimensions);
 	}
 	/** @brief Get the distance metric type (via Coordinator -> Config). */
-	core::LmDiskannMetricType GetMetricType() const {
+	common::LmDiskannMetricType GetMetricType() const {
 		if (!coordinator_)
 			throw ::duckdb::InternalException("Coordinator not initialized in GetMetricType");
 		return coordinator_->GetConfig().metric_type;

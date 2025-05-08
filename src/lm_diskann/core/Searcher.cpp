@@ -1,354 +1,238 @@
+/**
+ * @file Searcher.cpp
+ * @brief Implements the beam search algorithm for LM-DiskANN.
+ */
+
 #include "Searcher.hpp"
 
-#include "../common/types.hpp"
-#include "LmDiskannIndex.hpp"       // Include main index header
-#include "LmDiskannScanState.hpp"   // For LmDiskannScanState
-#include "distance.hpp"             // For ComputeExactDistanceFloat, ComputeApproxSimilarityTernary
-#include "duckdb/common/assert.hpp" // For assert
-#include "duckdb/common/printer.hpp"
-#include "duckdb/common/vector.hpp" // For FlatVector - needed?
-#include "duckdb/storage/buffer/buffer_handle.hpp"
-#include "index_config.hpp"         // For config structs (needed potentially by index members)
-#include "ternary_quantization.hpp" // For EncodeTernary, GetKernel, WordsPerPlane (needed by TopKTernarySearch)
+// Core interfaces and types
+#include "../common/ann.hpp"
+#include "../common/duckdb_types.hpp"
+#include "IGraphManager.hpp"
+#include "IStorageManager.hpp"
+#include "distance.hpp" // For ComputeExactDistanceFloat and ConvertRawVectorToFloat (assuming moved here)
+#include "index_config.hpp"
 
-#include <algorithm> // For std::sort, std::min
-#include <queue>     // For priority_queue
-#include <unordered_set>
-#include <utility> // For std::pair
+// Standard library
+#include <algorithm> // For std::max
+#include <cstring>   // For memcpy
+#include <iostream>
+#include <queue>
+#include <set>
 #include <vector>
 
 namespace diskann {
 namespace core {
 
-// Define CandidateNode using the negated similarity score as distance
-using CandidateNode = std::pair<float, common::idx_t>; // Pair: (distance_score, node_id)
+// Assuming INVALID_INDEX_POINTER definition is moved to common/types.hpp or similar accessible header.
+// If not, define it here:
+// const common::IndexPointer INVALID_INDEX_POINTER = common::IndexPointer();
 
-// Define the priority queue as a min-heap (stores nodes with smallest distance
-// at top)
-using CandidateQueue = std::priority_queue<CandidateNode, std::vector<CandidateNode>, std::greater<CandidateNode>>;
+struct NodeCandidate {
+	float distance;
+	common::row_t row_id;
 
-using candidate_pair_t = std::pair<float, ::duckdb::row_t>;
-
-// --- Search Helper Implementation --- //
-
-// Helper to calculate plane size bytes
-inline common::idx_t GetPlaneSizeBytes(const ::diskann::duckdb::LmDiskannIndex &index) {
-	// Use public getter instead of accessing private member
-	common::idx_t dimensions = index.GetDimensions(); // Assuming this getter exists
-	if (dimensions == 0) {
-		throw ::duckdb::InternalException("Index dimensions are 0, cannot calculate plane size");
+	bool operator>(const NodeCandidate &other) const {
+		return distance > other.distance;
 	}
-	return GetTernaryPlaneSizeBytes(dimensions);
-}
+};
 
-void PerformSearch(LmDiskannScanState &scan_state, ::diskann::duckdb::LmDiskannIndex &index,
-                   const LmDiskannConfig &config, bool find_exact_distances) {
-	// Max-heap for candidates (stores {distance, node_id}) - we want smallest
-	// distance = highest priority So we store {-distance, node_id} or use
-	// std::greater
-	std::priority_queue<candidate_pair_t> candidate_pqueue; // Max-heap
+// TODO: Move ConvertRawVectorToFloat declaration/definition to distance.hpp/cpp or a new core utility file.
+// Placeholder signature assuming it's moved:
+// bool ConvertRawVectorToFloat(common::const_data_ptr_t raw_vector_data, float *float_vector_out,
+//                              const LmDiskannConfig &config, const NodeLayoutOffsets &node_layout);
 
-	// TODO: Implement entry point initialization
-	// 1. Initialize with Entry Point(s)
-	// Access private helpers via friend status or make them public/internal
-	// helpers? Assuming friend access is okay for now.
-	::duckdb::row_t entry_point_rowid = index.GetEntryPoint();
-	if (entry_point_rowid == ::duckdb::NumericLimits<::duckdb::row_t>::Maximum()) {
-		// No entry point, index is empty or deleted entry not replaced
-		// Ensure scan_state.candidates is empty (it should be initially)
-		// std::priority_queue<candidate_pair_t>().swap(scan_state.candidates);
-		//
-		// Clear if needed
-		return; // No search possible
+void PerformSearch(diskann::db::LmDiskannScanState &scan_state, const LmDiskannConfig &config,
+                   const NodeLayoutOffsets &node_layout, IGraphManager &graph_manager, IStorageManager &storage_manager,
+                   bool final_pass) {
+
+	if (scan_state.l_search == 0 || scan_state.l_search < scan_state.k) {
+		scan_state.l_search = std::max(static_cast<common::idx_t>(config.l_search), scan_state.k);
 	}
 
-	::duckdb::IndexPointer entry_point_ptr;
-	if (!index.TryGetNodePointer(entry_point_rowid, entry_point_ptr)) {
-		// Entry point exists but node pointer not found (map inconsistency?)
-		::duckdb::Printer::Print(::duckdb::StringUtil::Format(
-		    "Warning: Entry point rowid %lld not found in map during search.", entry_point_rowid));
-		// Ensure scan_state.candidates is empty
-		// std::priority_queue<candidate_pair_t>().swap(scan_state.candidates);
+	// Searcher manages these internally
+	std::set<common::row_t> visited_nodes;
+	std::priority_queue<NodeCandidate, std::vector<NodeCandidate>, std::greater<NodeCandidate>>
+	    top_candidates; // Min-heap for L candidates
+
+	std::priority_queue<NodeCandidate, std::vector<NodeCandidate>, std::greater<NodeCandidate>> candidate_beam;
+
+	// --- Initialization ---
+	common::row_t entry_point_rowid = graph_manager.GetEntryPointRowId();
+	common::IndexPointer entry_point_ptr = graph_manager.GetEntryPointPointer();
+
+	// TODO: Check visibility/tombstone for entry point via IShadowStorageService?
+	if (entry_point_rowid == common::NumericLimits<common::row_t>::Maximum() ||
+	    entry_point_ptr == common::IndexPointer()) {
 		return;
 	}
 
-	// Calculate exact distance to entry point
-	::duckdb::vector<float> entry_node_float_vec(config.dimensions);
-	::duckdb::vector<float> query_float_vec(config.dimensions);
-	try {
-		auto entry_node_handle = index.GetNodeBuffer(entry_point_ptr);
-		auto entry_node_block = entry_node_handle.Ptr();
-		::duckdb::const_data_ptr_t entry_node_raw_vec =
-		    NodeAccessors::GetNodeVector(entry_node_block, index.GetNodeLayout());
+	// TODO: Block fetching should check shadow store first (needs IShadowStorageService param)
+	common::const_data_ptr_t entry_node_block = storage_manager.GetNodeBlockData(entry_point_ptr);
+	if (!entry_node_block) {
+		return;
+	}
+	// Replace NodeAccessors::GetRawNodeVector
+	const unsigned char *entry_raw_vector = entry_node_block + node_layout.node_vector_offset;
 
-		// Assuming query_vector_ptr points to float data
-		memcpy(query_float_vec.data(), scan_state.query_vector_ptr, config.dimensions * sizeof(float));
+	// Check if pointer is within reasonable bounds of the block (basic sanity check)
+	// This assumes block size is known or calculable. For now, skipping detailed bounds check.
 
-		index.ConvertNodeVectorToFloat(entry_node_raw_vec, entry_node_float_vec.data());
-
-		float exact_entry_dist = ComputeExactDistanceFloat(query_float_vec.data(), entry_node_float_vec.data(),
-		                                                   config.dimensions, config.metric_type);
-
-		// Use negative distance for max-heap behavior (closest is highest
-		  priority) candidate_pqueue.push({-exact_entry_dist,
-      entry_point_rowid});
-		  scan_state.visited.insert(entry_point_rowid);
-	} catch (const std::exception &e) {
-		::duckdb::Printer::Print(
-		    ::duckdb::StringUtil::Format("Warning: Failed to process entry point %lld: %s", entry_point_rowid, e.what()));
-		Ensure scan_state.candidates is empty std::priority_queue<candidate_pair_t>().swap(scan_state.candidates);
+	std::vector<float> entry_float_vector_storage(config.dimensions);
+	// Call assuming ConvertRawVectorToFloat is a free function in diskann::core
+	if (!diskann::common::ConvertRawVectorToFloat(entry_raw_vector, entry_float_vector_storage.data(), config.dimensions,
+	                                              config.node_vector_type)) {
+		// Log error or handle conversion failure
 		return;
 	}
 
-	// --- Main Search Loop --- //
-	common::idx_t iterations = 0;
+	float dist_to_entry = diskann::core::ComputeExactDistanceFloat(
+	    scan_state.query_vector_ptr, entry_float_vector_storage.data(), config.dimensions, config.metric_type);
 
-	// Use the top_candidates max-heap from scan_state to track best results
-	// Note: scan_state.candidates should be the main exploration queue, not used
-	// here? Let's rename the local one to exploration_queue and use
-	// scan_state.top_candidates for results.
-	std::priority_queue<candidate_pair_t>().swap(scan_state.top_candidates); // Clear results heap
+	candidate_beam.push({dist_to_entry, entry_point_rowid});
+	visited_nodes.insert(entry_point_rowid);
+	top_candidates.push({dist_to_entry, entry_point_rowid});
 
-	while (!candidate_pqueue.empty()) {
-		iterations++;
+	// --- Beam Search Loop ---
+	float lowest_dist_in_results = dist_to_entry;
 
-		candidate_pair_t best_candidate = candidate_pqueue.top();
-		candidate_pqueue.pop();
-		float current_best_neg_dist = best_candidate.first; // This is negative distance
+	while (!candidate_beam.empty()) {
+		NodeCandidate current_candidate = candidate_beam.top();
+		candidate_beam.pop();
 
-		// Pruning condition: If the candidate from exploration queue is further
-		// away (more negative distance) than the k-th element currently in our
-		// results heap (worst distance in results), and results heap is full, we
-		// can stop exploring this path.
-		if (scan_state.top_candidates.size() >= config.l_search &&
-		    current_best_neg_dist < scan_state.top_candidates.top().first) {
-			// Note: top_candidates stores {pos_distance, rowid}, so top() gives
-			// largest distance candidate_pqueue stores {-distance, rowid}. If
-			// -cand_dist < -results_worst_dist, then cand_dist > results_worst_dist.
-			// This logic needs refinement. Let's stick to exploring based on L_search
-			// limit first.
+		if (current_candidate.distance > lowest_dist_in_results && top_candidates.size() >= scan_state.l_search) {
+			// Beam cutoff heuristic (can be refined)
 		}
 
-		::duckdb::row_t current_rowid = best_candidate.second;
-
-		::duckdb::IndexPointer current_node_ptr;
-		try {
-			if (!index.TryGetNodePointer(current_rowid, current_node_ptr))
-				continue; // Node deleted?
-			auto current_node_handle = index.GetNodeBuffer(current_node_ptr);
-			auto current_node_block = current_node_handle.Ptr();
-			const NodeLayoutOffsets &layout = index.GetNodeLayout();
-
-			uint16_t neighbor_count = NodeAccessors::GetNeighborCount(current_node_block);
-			const ::duckdb::row_t *neighbor_ids_ptr = NodeAccessors::GetNeighborIDsPtr(current_node_block, layout);
-			if (!neighbor_ids_ptr)
-				continue;
-
-			for (uint16_t i = 0; i < neighbor_count; ++i) {
-				::duckdb::row_t neighbor_rowid = neighbor_ids_ptr[i];
-
-				if (scan_state.visited.count(neighbor_rowid)) {
-					continue;
-				}
-				scan_state.visited.insert(neighbor_rowid);
-
-				TernaryPlanesView neighbor_planes =
-				    NodeAccessors::GetNeighborTernaryPlanes(current_node_block, layout, i, config.dimensions);
-
-				if (!neighbor_planes.IsValid()) {
-					::duckdb::Printer::Print(::duckdb::StringUtil::Format(
-					    "Warning: Invalid ternary planes for neighbor %lld of node %lld", neighbor_rowid, current_rowid));
-					continue;
-				}
-
-				float approx_distance = index.CalculateApproxDistance(query_float_vec.data(), neighbor_planes.positive_plane);
-
-				// Add to exploration queue if potentially better than the L_search
-				// worst result
-				if (scan_state.top_candidates.size() < config.l_search ||
-				    approx_distance < scan_state.top_candidates.top().first) {
-					candidate_pqueue.push({-approx_distance, neighbor_rowid}); // Push negative distance
-
-					// Update results heap (top_candidates stores positive distance)
-					scan_state.top_candidates.push({approx_distance, neighbor_rowid});
-					if (scan_state.top_candidates.size() > config.l_search) {
-						scan_state.top_candidates.pop(); // Keep only L_search best
-					}
-				}
-			}
-		} catch (const std::exception &e) {
-			::duckdb::Printer::Print(::duckdb::StringUtil::Format("Warning: Error processing node %lld during search: %s",
-			                                                      current_rowid, e.what()));
+		// TODO: Architectural issue: How to get IndexPointer from row_id?
+		//       V2 Plan says IShadowStorageService handles map. PerformSearch needs access.
+		//       Using graph_manager.TryGetNodePointer for now, but flagged by linter & V2 plan.
+		common::IndexPointer current_node_ptr;
+		if (!graph_manager.TryGetNodePointer(current_candidate.row_id, current_node_ptr)) {
 			continue;
 		}
-	}
 
-	// --- Post-Processing --- //
-	// scan_state.top_candidates now holds the L_search best candidates based on
-	// approximate distance.
+		// TODO: Check visibility/tombstone for current_node_ptr via IShadowStorageService?
 
-	if (find_exact_distances && scan_state.k > 0) {
-		// Re-rank the top_candidates using exact distances
-		std::vector<candidate_pair_t> final_candidates; // Use {exact_dist, rowid}
-		final_candidates.reserve(scan_state.top_candidates.size());
-		::duckdb::vector<float> node_float_vec(config.dimensions);
-
-		while (!scan_state.top_candidates.empty()) {
-			::duckdb::row_t cand_rowid = scan_state.top_candidates.top().second;
-			scan_state.top_candidates.pop();
-
-			::duckdb::IndexPointer cand_ptr;
-			try {
-				if (!index.TryGetNodePointer(cand_rowid, cand_ptr))
-					continue;
-				auto cand_handle = index.GetNodeBuffer(cand_ptr);
-				auto cand_block = cand_handle.Ptr();
-				::duckdb::const_data_ptr_t cand_raw_vec = NodeAccessors::GetNodeVector(cand_block, index.GetNodeLayout());
-
-				index.ConvertNodeVectorToFloat(cand_raw_vec, node_float_vec.data());
-
-				float exact_dist = ComputeExactDistanceFloat(query_float_vec.data(), node_float_vec.data(), config.dimensions,
-				                                             config.metric_type);
-				final_candidates.push_back({exact_dist, cand_rowid});
-
-			} catch (const std::exception &e) {
-				::duckdb::Printer::Print(
-				    ::duckdb::StringUtil::Format("Warning: Failed to re-rank candidate %lld: %s", cand_rowid, e.what()));
-			}
+		std::vector<common::row_t> neighbor_row_ids;
+		if (!graph_manager.GetNeighbors(current_node_ptr, neighbor_row_ids)) {
+			continue;
 		}
 
-		// Sort final candidates by exact distance (ascending)
-		std::sort(final_candidates.begin(), final_candidates.end());
+		for (common::row_t neighbor_rowid : neighbor_row_ids) {
+			if (neighbor_rowid == common::NumericLimits<common::row_t>::Maximum())
+				continue;
 
-		// Re-populate the top_candidates heap (which is a max-heap) up to k
-		// results. This is slightly awkward as top_candidates is used for L_search
-		// AND final results. Let's clear it and repopulate.
-		std::priority_queue<candidate_pair_t>().swap(scan_state.top_candidates);
-		for (const auto &final_cand : final_candidates) {
-			if (scan_state.top_candidates.size() < scan_state.k) {
-				scan_state.top_candidates.push(final_cand); // Push {exact_dist, rowid}
-			} else if (final_cand.first < scan_state.top_candidates.top().first) {
-				// If the new exact distance is better than the worst in the heap,
-				// replace
-				scan_state.top_candidates.pop();
-				scan_state.top_candidates.push(final_cand);
-			} else {
-				// Since final_candidates is sorted, no need to check further if heap is
-				// full break; // Optimization: break early if remaining candidates are
-				// worse
+			if (visited_nodes.count(neighbor_rowid)) {
+				continue;
 			}
-		}
-	} // End if(find_exact_distances)
 
-	// PerformSearch is now complete. The results are in
-	// scan_state.top_candidates. LmDiskannIndex::Scan will extract the RowIDs
-	// from this heap.
-}
+			visited_nodes.insert(neighbor_rowid);
 
-//--------------------------------------------------------------------
-// Top-K Ternary Search Function
-//--------------------------------------------------------------------
+			float dist_to_neighbor;
+			// TODO: Architectural issue: How to get IndexPointer from row_id?
+			//       V2 Plan says IShadowStorageService handles map. PerformSearch needs access.
+			//       Using graph_manager.TryGetNodePointer for now.
+			common::IndexPointer neighbor_ptr;
+			if (!graph_manager.TryGetNodePointer(neighbor_rowid, neighbor_ptr)) {
+				continue;
+			}
 
-/**
- * @brief Performs a Top-K nearest neighbor search using a batch of ternary
- * encoded vectors.
- *
- * @param query Pointer to the original floating-point query vector.
- * @param dims The original dimensionality of the query vector (used for
- * encoding).
- * @param database_batch A view describing the batch of pre-encoded database
- * vectors.
- * @param K The number of nearest neighbors to retrieve.
- * @param neighIDs Pointer to an array of uint64_t IDs corresponding to the
- * vectors in the database_batch.
- * @param[out] out A std::vector of std::pair<float, uint64_t> which will be
- * filled with the top K results, sorted by score (highest score first). The
- * pair contains (similarity_score, neighbor_ID).
- *
- * @details (Remains largely the same)
- * 1. Encodes the floating-point query vector into its ternary bit-planes using
- * 'dims'.
- * 2. Selects the fastest available ternary dot product kernel.
- * 3. Iterates through the N database vectors described by 'database_batch':
- *    a. Calculates pointers to the current database vector's bit-planes using
- * offsets. b. Computes the raw ternary dot product score. c. Normalizes the
- * score using 'dims'. d. Maintains a min-priority queue (min-heap) of size K.
- * 4. Extracts results.
- */
-inline void TopKTernarySearch(const float *query,
-                              size_t dims,                                  // Query vector dimension
-                              const TernaryPlaneBatchView &database_batch,  // Batch of DB vectors
-                              size_t K,                                     // Number of neighbors to find
-                              const uint64_t *neighIDs,                     // IDs for database vectors
-                              std::vector<std::pair<float, uint64_t>> &out) // Output vector
-{
-	// --- Input Validation ---
-	// Extract N from the batch view for checks
-	size_t N = database_batch.num_vectors;
+			// TODO: Check visibility/tombstone for neighbor_ptr via IShadowStorageService?
 
-	assert(query != nullptr && "Query vector pointer cannot be null");
-	assert(database_batch.IsValid() && "Database batch view is invalid");
-	assert(neighIDs != nullptr && "Neighbor IDs pointer cannot be null");
-	assert(dims > 0 && "Query dimensions must be positive");
-	assert(K > 0 && "K must be greater than 0");
-	// Optional: Check consistency between dims and words_per_plane?
-	// assert(database_batch.words_per_plane == WordsPerPlane(dims) && "Dimension
-	// mismatch");
+			// TODO: Block fetching should check shadow store first (needs IShadowStorageService param)
+			common::const_data_ptr_t neighbor_node_block = storage_manager.GetNodeBlockData(neighbor_ptr);
+			if (!neighbor_node_block) {
+				continue;
+			}
 
-	out.clear(); // Clear output vector initially
-	if (N == 0)
-		return;           // Handle empty database
-	K = std::min(K, N); // Adjust K if larger than database size
-	if (K == 0)
-		return;
+			// Replace NodeAccessors::GetRawNodeVector
+			const unsigned char *neighbor_raw_vector = neighbor_node_block + node_layout.node_vector_offset;
 
-	// --- Preparation ---
-	// Extract batch properties from the view
-	const uint64_t *posPlaneData = database_batch.positive_planes_start;
-	const uint64_t *negPlaneData = database_batch.negative_planes_start;
-	const size_t words_per_vector = database_batch.words_per_plane;
+			std::vector<float> neighbor_float_vector_storage(config.dimensions);
+			// Call assuming ConvertRawVectorToFloat is a free function in diskann::core
+			if (!diskann::common::ConvertRawVectorToFloat(neighbor_raw_vector, neighbor_float_vector_storage.data(),
+			                                              config.dimensions, config.node_vector_type)) {
+				continue;
+			}
 
-	// Allocate temporary buffers for the encoded query vector's planes (using
-	// query dims)
-	std::vector<uint64_t> query_pos_plane_vec(words_per_vector);
-	std::vector<uint64_t> query_neg_plane_vec(words_per_vector);
-	EncodeTernary(query, query_pos_plane_vec.data(), query_neg_plane_vec.data(), dims);
-	const uint64_t *qp = query_pos_plane_vec.data();
-	const uint64_t *qn = query_neg_plane_vec.data();
+			// TODO: Re-introduce approximate distance calculation using ternary planes if config.use_ternary_quantization is
+			// true. This requires accessing compressed edge data, potentially from current_node_block, not
+			// neighbor_node_block. Needs NodeLayoutOffsets and likely a replacement for
+			// NodeAccessors::GetNeighborTernaryPlanes. Using exact distance for now regardless of config flag.
+			dist_to_neighbor = diskann::core::ComputeExactDistanceFloat(
+			    scan_state.query_vector_ptr, neighbor_float_vector_storage.data(), config.dimensions, config.metric_type);
 
-	dot_fun_t dot_kernel = GetDotKernel();
+			if (top_candidates.size() < scan_state.l_search || dist_to_neighbor < lowest_dist_in_results) {
+				candidate_beam.push({dist_to_neighbor, neighbor_rowid});
+				top_candidates.push({dist_to_neighbor, neighbor_rowid});
 
-	using ScoreIdPair = std::pair<float, uint64_t>;
-	auto min_heap_comparator = [](const ScoreIdPair &a, const ScoreIdPair &b) {
-		return a.first > b.first; // Smallest score has highest priority (at the top)
-	};
-	std::priority_queue<ScoreIdPair, std::vector<ScoreIdPair>, decltype(min_heap_comparator)> min_heap(
-	    min_heap_comparator);
-
-	// --- Search Loop ---
-	for (size_t idx = 0; idx < N; ++idx) { // Use N from batch view
-		const uint64_t *current_vpos = posPlaneData + idx * words_per_vector;
-		const uint64_t *current_vneg = negPlaneData + idx * words_per_vector;
-		int64_t raw_score = dot_kernel(qp, qn, current_vpos, current_vneg, words_per_vector);
-
-		// Normalize score using query dimensions
-		float normalized_score = (dims > 0) ? static_cast<float>(raw_score) / static_cast<float>(dims) : 0.0f;
-
-		// --- Update Top-K Heap ---
-		if (min_heap.size() < K) {
-			min_heap.emplace(normalized_score, neighIDs[idx]);
-		} else if (normalized_score > min_heap.top().first) {
-			min_heap.pop();
-			min_heap.emplace(normalized_score, neighIDs[idx]);
+				if (top_candidates.size() > scan_state.l_search) {
+					top_candidates.pop();
+				}
+				if (!top_candidates.empty()) {
+					lowest_dist_in_results = top_candidates.top().distance;
+				}
+			}
 		}
 	}
 
-	// --- Result Extraction ---
-	size_t result_count = min_heap.size();
-	out.resize(result_count);
-	for (size_t i = 0; i < result_count; ++i) {
-		out[result_count - 1 - i] = min_heap.top();
-		min_heap.pop();
+	if (final_pass) {
+		// Re-ranking logic: This part needs access to node data and ConvertRawVectorToFloat
+		std::priority_queue<NodeCandidate, std::vector<NodeCandidate>, std::greater<NodeCandidate>> final_results_min_heap;
+		std::vector<NodeCandidate> temp_top_candidates_vec;
+		while (!top_candidates.empty()) {
+			temp_top_candidates_vec.push_back(top_candidates.top());
+			top_candidates.pop();
+		}
+
+		std::vector<float> node_float_vector_storage(config.dimensions);
+		for (const auto &candidate : temp_top_candidates_vec) {
+			// TODO: Architectural issue: How to get IndexPointer from row_id?
+			common::IndexPointer node_ptr;
+			if (!graph_manager.TryGetNodePointer(candidate.row_id, node_ptr))
+				continue;
+
+			// TODO: Check visibility/tombstone for node_ptr via IShadowStorageService?
+
+			// TODO: Block fetching should check shadow store first.
+			common::const_data_ptr_t node_block = storage_manager.GetNodeBlockData(node_ptr);
+			if (!node_block)
+				continue;
+
+			// Replace NodeAccessors::GetRawNodeVector
+			const unsigned char *raw_vector = node_block + node_layout.node_vector_offset;
+
+			// Call assuming ConvertRawVectorToFloat is a free function in diskann::core
+			if (!raw_vector || !diskann::common::ConvertRawVectorToFloat(raw_vector, node_float_vector_storage.data(),
+			                                                             config.dimensions, config.node_vector_type)) {
+				continue;
+			}
+
+			float exact_dist = diskann::core::ComputeExactDistanceFloat(
+			    scan_state.query_vector_ptr, node_float_vector_storage.data(), config.dimensions, config.metric_type);
+
+			final_results_min_heap.push({exact_dist, candidate.row_id});
+			if (final_results_min_heap.size() > scan_state.k) {
+				final_results_min_heap.pop();
+			}
+		}
+
+		// Populate scan_state.result_row_ids from final_results_min_heap
+		scan_state.result_row_ids.clear();
+		std::vector<NodeCandidate> final_k_candidates_vec;
+		while (!final_results_min_heap.empty()) {
+			final_k_candidates_vec.push_back(final_results_min_heap.top());
+			final_results_min_heap.pop();
+		}
+		// final_results_min_heap is a min-heap (smallest distance on top).
+		// To get results typically ordered by similarity (closest first), reverse if needed.
+		// For now, assume current order (smallest distance first from min-heap pop) is fine for result_row_ids.
+		// Or if specific order is needed: std::reverse(final_k_candidates_vec.begin(), final_k_candidates_vec.end());
+		scan_state.result_row_ids.reserve(final_k_candidates_vec.size());
+		for (const auto &cand : final_k_candidates_vec) {
+			scan_state.result_row_ids.push_back(cand.row_id);
+		}
 	}
 }
 

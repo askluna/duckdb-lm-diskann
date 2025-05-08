@@ -4,38 +4,14 @@
  * the LM-DiskANN index.
  */
 #pragma once
-
-#include "../common/types.hpp" // Should provide common::idx_t, common::row_t, common::IndexPointer
+#include "../common/ann.hpp"
+#include "../common/duckdb_types.hpp"
 
 #include <cstdint> // For uint8_t, uint32_t etc.
 #include <string>
 
 namespace diskann {
 namespace core {
-
-// --- Enums for LM-DiskANN Parameters --- //
-
-/**
- * @brief Metric types supported by the index.
- * Corresponds to nDistanceFunc / VECTOR_METRIC_TYPE_PARAM_ID
- */
-enum class LmDiskannMetricType : uint8_t {
-	UNKNOWN = 0, // Default / Unset state
-	L2 = 1,      // Euclidean distance
-	COSINE = 2,  // Cosine similarity (often converted to distance: 1 - cosine)
-	IP = 3,      // Inner product
-	HAMMING = 4  // Hamming distance (Potentially for binary vectors)
-};
-
-/**
- * @brief Data types supported for the main node vectors.
- * Corresponds to nNodeVectorType / VECTOR_TYPE_PARAM_ID
- */
-enum class LmDiskannVectorType : uint8_t {
-	UNKNOWN = 0, // Default / Unset state
-	FLOAT32 = 1, // 32-bit floating point
-	INT8 = 2,    // 8-bit integer (requires quantization parameters potentially)
-};
 
 // --- Configuration Constants --- //
 
@@ -54,7 +30,7 @@ struct LmDiskannOptionKeys {
  * @brief Default values for LM-DiskANN configuration parameters.
  */
 struct LmDiskannConfigDefaults {
-	static constexpr LmDiskannMetricType METRIC = LmDiskannMetricType::L2;
+	static constexpr common::LmDiskannMetricType METRIC = common::LmDiskannMetricType::L2;
 	static constexpr uint32_t R = 64;
 	static constexpr uint32_t L_INSERT = 128;
 	static constexpr float ALPHA = 1.2f;
@@ -71,20 +47,20 @@ inline constexpr uint8_t LMDISKANN_CURRENT_FORMAT_VERSION = 3;
  * @brief Holds the core configuration parameters for the LM-DiskANN index.
  */
 struct LmDiskannConfig {
-	LmDiskannMetricType metric_type = LmDiskannConfigDefaults::METRIC; // Distance metric used for comparisons.
-	uint32_t r = LmDiskannConfigDefaults::R;                           // Max neighbors (degree) per node in
-	                                                                   // the graph (R).
-	uint32_t l_insert = LmDiskannConfigDefaults::L_INSERT;             // Size of the candidate list during
-	                                                                   // index insertion (L_insert).
-	float alpha = LmDiskannConfigDefaults::ALPHA;                      // Alpha parameter for pruning
-	                                                                   // during insertion.
-	uint32_t l_search = LmDiskannConfigDefaults::L_SEARCH;             // Size of the candidate list during
-	                                                                   // search (L_search).
+	common::LmDiskannMetricType metric_type = LmDiskannConfigDefaults::METRIC; // Distance metric used for comparisons.
+	uint32_t r = LmDiskannConfigDefaults::R;                                   // Max neighbors (degree) per node in
+	                                                                           // the graph (R).
+	uint32_t l_insert = LmDiskannConfigDefaults::L_INSERT;                     // Size of the candidate list during
+	                                                                           // index insertion (L_insert).
+	float alpha = LmDiskannConfigDefaults::ALPHA;                              // Alpha parameter for pruning
+	                                                                           // during insertion.
+	uint32_t l_search = LmDiskannConfigDefaults::L_SEARCH;                     // Size of the candidate list during
+	                                                                           // search (L_search).
 
 	common::idx_t dimensions = 0; // Dimensionality of the vectors. Derived from column type.
-	LmDiskannVectorType node_vector_type = LmDiskannVectorType::UNKNOWN; // Data type of the node vectors. Derived
-	                                                                     // from column type.
-	std::string path;                                                    // Path to the index data directory on disk.
+	common::LmDiskannVectorType node_vector_type = common::LmDiskannVectorType::UNKNOWN; // Data type of the node vectors.
+	                                                                                     // Derived from column type.
+	std::string path; // Path to the index data directory on disk.
 
 	// Added for ternary quantization support for edges
 	bool use_ternary_quantization = false;     // Whether to use ternary quantization for edges.
@@ -183,7 +159,7 @@ void ValidateParameters(const LmDiskannConfig &config);
  * @return Size in bytes.
  * @throws InternalException for unsupported types.
  */
-common::idx_t GetVectorTypeSizeBytes(LmDiskannVectorType type);
+common::idx_t GetVectorTypeSizeBytes(common::LmDiskannVectorType type);
 
 /**
  * @brief Gets the size in bytes for *one* compressed ternary plane (pos or neg)
@@ -212,26 +188,15 @@ common::idx_t GetTernaryEdgeSizeBytes(common::idx_t dimensions);
  */
 NodeLayoutOffsets CalculateLayoutInternal(const LmDiskannConfig &config);
 
-// --- Utility Functions (Potentially move later) ---
-
-/**
- * @brief Helper function to convert enum LmDiskannMetricType to string
- */
-const char *LmDiskannMetricTypeToString(LmDiskannMetricType type);
-
-/**
- * @brief Helper function to convert enum LmDiskannVectorType to string
- */
-const char *LmDiskannVectorTypeToString(LmDiskannVectorType type);
-
 // --- Metadata Struct --- //
 /**
  * @brief Holds all parameters persisted in the index metadata block.
  */
 struct LmDiskannMetadata {
-	uint8_t format_version = 0;                                          // Internal format version for compatibility
-	LmDiskannMetricType metric_type = LmDiskannMetricType::UNKNOWN;      // Distance metric used
-	LmDiskannVectorType node_vector_type = LmDiskannVectorType::UNKNOWN; // Type of vectors stored in nodes
+	uint8_t format_version = 0; // Internal format version for compatibility
+	common::LmDiskannMetricType metric_type = common::LmDiskannMetricType::UNKNOWN; // Distance metric used
+	common::LmDiskannVectorType node_vector_type =
+	    common::LmDiskannVectorType::UNKNOWN; // Type of vectors stored in nodes
 	// Edge type is implicitly Ternary, no need to store explicitly
 	common::idx_t dimensions = 0;               // Vector dimensionality
 	uint32_t r = 0;                             // Max neighbors per node (graph degree)

@@ -5,7 +5,8 @@
  */
 #pragma once
 
-#include "../common/types.hpp" // Include common types
+#include "../common/ann.hpp"
+#include "../common/duckdb_types.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/types/row/row_layout.hpp"
 #include "duckdb/common/types/vector.hpp"

@@ -1,6 +1,8 @@
-#include "../common/types.hpp"
-#include "../store/IShadowStorageService.hpp"
 #include "Coordinator.hpp"
+
+#include "../common/ann.hpp"
+#include "../common/duckdb_types.hpp"
+#include "../store/IShadowStorageService.hpp"
 #include "IGraphManager.hpp"
 #include "ISearcher.hpp"
 #include "IStorageManager.hpp"

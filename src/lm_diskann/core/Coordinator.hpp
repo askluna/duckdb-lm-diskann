@@ -1,7 +1,8 @@
 #pragma once
 
-#include "../common/types.hpp" // Provides IndexPointer, row_t, idx_t
-#include "index_config.hpp"    // Provides LmDiskannConfig
+#include "../common/ann.hpp"
+#include "../common/duckdb_types.hpp"
+#include "index_config.hpp"
 
 #include <iostream>
 #include <memory>

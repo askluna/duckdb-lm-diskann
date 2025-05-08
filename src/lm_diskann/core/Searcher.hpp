@@ -1,67 +1,54 @@
 /**
- * @file search.hpp
- * @brief Declares the core beam search function for LM-DiskANN.
+ * @file Searcher.hpp
+ * @brief Defines the interface and implementation for searching the LM-DiskANN graph.
  */
 #pragma once
 
-#include "LmDiskannScanState.hpp"   // For LmDiskannScanState
-#include "duckdb/common/common.hpp" // For idx_t?
-#include "index_config.hpp" // Include for TernaryPlaneBatchView and LmDiskannConfig
-#include <cstdint>          // For uint64_t
-#include <utility>          // For std::pair
-#include <vector>           // For std::vector
+#include "../common/ann.hpp"
+#include "../common/duckdb_types.hpp"
+#include "duckdb/common/atomic.hpp"
+#include "duckdb/common/vector.hpp"
+#include "duckdb/execution/index/fixed_size_allocator.hpp" // For FixedSizeAllocator
+#include "index_config.hpp"                                // For LmDiskannConfig, NodeLayoutOffsets
+
+#include <queue> // For std::priority_queue
+#include <vector>
+
+// Forward declarations for interfaces used
+namespace diskann {
+namespace core {
+class IGraphManager;
+class IStorageManager;
+} // namespace core
+} // namespace diskann
+
+// Forward declaration for scan state (assuming it stays in duckdb namespace for now)
+// TODO: Decouple LmDiskannScanState if it holds DuckDB specific types directly.
+namespace diskann {
+namespace db {
+struct LmDiskannScanState;
+} // namespace db
+} // namespace diskann
 
 namespace diskann {
 namespace core {
 
-class LmDiskannIndex;      // Forward declare to access members/types
-struct LmDiskannScanState; // Forward declare scan state struct
-struct LmDiskannConfig;
-
-// --- Search Algorithm ---
-// Implements the core beam search function for LM-DiskANN.
-
 /**
- * @brief Performs the beam search algorithm to find approximate nearest
- * neighbors.
- *
- * @details This function implements the core graph traversal logic for DiskANN.
- * It starts from one or more entry points, explores the graph using a priority
- * queue (beam) of candidates, and maintains a set of visited nodes to avoid
- * redundant work. The search depth and width are controlled by L_search (from
- * config).
- *
- * @param scan_state The current scan state, containing the query vector,
- * candidate queue, visited set, etc.
- * @param index The LmDiskannIndex instance, providing access to node data and
- * configuration.
- * @param config The index configuration (L_search, metric, dimensions, etc.).
- * @param find_exact_distances If true, calculate exact distances for the final
- * top-k results (expensive).
+ * @brief Performs the actual search algorithm on the graph.
+ * @details This is a free function implementing the beam search logic.
+ * @param scan_state Holds query information, search parameters (L), and results.
+ * @param config The index configuration.
+ * @param node_layout Layout offsets for accessing node data.
+ * @param graph_manager Interface to access graph structure (neighbors) and node vectors.
+ * @param storage_manager Interface to access raw node block data.
+ * @param final_pass If true, calculate exact distances for top candidates; otherwise, use approximate distances.
  */
-void PerformSearch(LmDiskannScanState &scan_state, LmDiskannIndex &index,
-                   const LmDiskannConfig &config, bool find_exact_distances);
+void PerformSearch(diskann::db::LmDiskannScanState &scan_state, const LmDiskannConfig &config,
+                   const NodeLayoutOffsets &node_layout, IGraphManager &graph_manager, IStorageManager &storage_manager,
+                   bool final_pass);
 
-/**
- * @brief Performs a Top-K nearest neighbor search using a batch of ternary
- * encoded vectors.
- * @details Uses the provided batch view to access contiguous plane data.
- * @note Moved from ternary_quantization.hpp
- * @param query Pointer to the query vector (float).
- * @param dims Query vector dimension (for encoding query).
- * @param database_batch Batch view of the pre-encoded database vectors.
- * @param K Number of nearest neighbors to find.
- * @param neighIDs Array of RowIDs corresponding to vectors in database_batch.
- * @param out Output vector to store pairs of <similarity_score, ID>.
- */
-void TopKTernarySearch(
-    const float *query,
-    size_t dims, // Query vector dimension (for encoding query)
-    const TernaryPlaneBatchView &database_batch, // Batch of DB vectors
-    size_t K,                                    // Number of neighbors to find
-    const uint64_t *neighIDs, // IDs corresponding to vectors in database_batch
-    std::vector<std::pair<float, uint64_t>>
-        &out); // Output: pairs of <similarity_score, ID>
+// Potentially move NodeCandidate and SearchResult structs here if they are
+// core concepts
 
 } // namespace core
 } // namespace diskann
