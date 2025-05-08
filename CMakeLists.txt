@@ -20,14 +20,21 @@ project(${TARGET_NAME})
 # option(USE_SIMSIMD
 #        "Use SIMSIMD library to sacrifice portability for vectorized search" OFF)
 
+# Find the Highway package provided by vcpkg
+# This makes Highway's targets available.
+find_package(hwy CONFIG REQUIRED)
+# find_package(simsimd CONFIG REQUIRED)
 
 include_directories(src/include)
 
 set(EXTENSION_SOURCES src/lm_diskann_extension.cpp)
 add_subdirectory(src/lm_diskann)
 
+# Build the static extension
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
-build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
+
+target_link_libraries(${EXTENSION_NAME} hwy::hwy simsimd)
+build_loadable_extension(${TARGET_NAME} "hwy::hwy simsimd" ${EXTENSION_SOURCES})
 
 install(
   TARGETS ${EXTENSION_NAME}
