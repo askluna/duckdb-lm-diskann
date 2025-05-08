@@ -670,7 +670,7 @@ LmDiskannIndex::InitializeScan(::duckdb::ClientContext &context, const ::duckdb:
 	}
 
 	// Create the scan state. L_search comes from config.
-	auto scan_state = ::duckdb::make_unique<LmDiskannScanState>(query_vector, k, config.l_search);
+	auto scan_state = ::duckdb::make_uniq<LmDiskannScanState>(query_vector, k, config.l_search);
 
 	// PerformSearch is no longer called here.
 	// Scan() will call Coordinator::Search().

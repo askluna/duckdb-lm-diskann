@@ -254,55 +254,49 @@ Searcher::Searcher(IStorageManager *storage_manager) : storage_manager_(storage_
 	}
 }
 
-void Searcher::Search(const float *query_vector, const LmDiskannConfig &config, IGraphManager *graph_manager,
+void Searcher::Search(const float *query_vector, const LmDiskannConfig &config,
+                      IGraphManager *graph_manager, // Changed to IGraphManager*
                       common::idx_t k_neighbors, std::vector<common::row_t> &result_row_ids,
                       common::idx_t search_list_size_param) {
-	if (!graph_manager) {
-		throw std::runtime_error("Searcher::Search: GraphManager is null.");
-	}
-	if (!storage_manager_) { // Use the member variable
-		throw std::runtime_error("Searcher::Search: StorageManager member is null. Was Searcher properly initialized?");
-	}
 
 	common::idx_t l_search = (search_list_size_param > 0) ? search_list_size_param : config.l_search;
-	if (l_search < k_neighbors) {
-		l_search = k_neighbors; // L_search must be at least K
+	if (l_search == 0) {
+		l_search = k_neighbors > 20 ? k_neighbors + 20 : 40;
 	}
+	l_search = std::max(l_search, k_neighbors);
 
-	const NodeLayoutOffsets node_layout = diskann::core::CalculateLayoutInternal(config); // Correct function call
+	NodeLayoutOffsets node_layout = CalculateLayoutInternal(config); // Calculate layout
 
-	result_row_ids.clear(); // Clear previous results
-
-	// Call the refactored PerformSearch free function
-	PerformSearch(query_vector, k_neighbors, l_search, result_row_ids, config, node_layout, *graph_manager,
-	              *storage_manager_, true /* final_pass */);
+	PerformSearch(query_vector, k_neighbors, l_search, result_row_ids, const_cast<LmDiskannConfig &>(config),
+	              node_layout, // Pass calculated NodeLayoutOffsets
+	              *graph_manager, *storage_manager_, true /* final_pass */);
 }
 
-void Searcher::SearchForInitialCandidates(const float *query_vector, const LmDiskannConfig &config,
-                                          IGraphManager *graph_manager, common::idx_t num_candidates_to_find,
-                                          std::vector<common::row_t> &candidate_row_ids,
-                                          common::idx_t search_list_size_param) {
-	if (!graph_manager) {
-		throw std::runtime_error("Searcher::SearchForInitialCandidates: GraphManager is null.");
+// Update signature to match ISearcher.hpp and Searcher.hpp
+void Searcher::SearchForInitialCandidates(const float *new_node_vector, common::idx_t dimensions, // Added dimensions
+                                          const LmDiskannConfig &config, IGraphManager *graph_manager,
+                                          common::idx_t num_candidates_to_find,
+                                          common::IndexPointer current_entry_point,            // Added
+                                          std::vector<common::row_t> &candidate_row_ids_out) { // Renamed
+
+	common::idx_t l_search_initial = config.l_insert;
+	l_search_initial = std::max(l_search_initial, num_candidates_to_find);
+
+	NodeLayoutOffsets node_layout = CalculateLayoutInternal(config); // Calculate layout
+
+	PerformSearch(new_node_vector, num_candidates_to_find, l_search_initial, candidate_row_ids_out,
+	              const_cast<LmDiskannConfig &>(config),
+	              node_layout, // Pass calculated NodeLayoutOffsets
+	              *graph_manager, *storage_manager_, false /* final_pass */);
+
+	if (candidate_row_ids_out.size() > num_candidates_to_find) {
+		candidate_row_ids_out.resize(num_candidates_to_find);
 	}
-	if (!storage_manager_) { // Use the member variable
-		throw std::runtime_error(
-		    "Searcher::SearchForInitialCandidates: StorageManager member is null. Was Searcher properly initialized?");
-	}
+}
 
-	common::idx_t l_search =
-	    (search_list_size_param > 0) ? search_list_size_param : config.l_insert; // Use l_insert for initial candidates
-	if (l_search < num_candidates_to_find) {
-		l_search = num_candidates_to_find;
-	}
-
-	const NodeLayoutOffsets node_layout = diskann::core::CalculateLayoutInternal(config); // Correct function call
-
-	candidate_row_ids.clear();
-
-	// Call PerformSearch, k_neighbors is num_candidates_to_find, final_pass is typically false for initial candidates
-	PerformSearch(query_vector, num_candidates_to_find, l_search, candidate_row_ids, config, node_layout, *graph_manager,
-	              *storage_manager_, false /* not final_pass */);
+common::idx_t Searcher::GetInMemorySize() const {
+	// TODO: Implement actual size calculation if Searcher holds significant state.
+	return 0;
 }
 
 } // namespace core
