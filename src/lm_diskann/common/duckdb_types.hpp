@@ -48,6 +48,8 @@ using Printer = ::duckdb::Printer;
 
 // Common exception type to be used within the core LM-DiskANN logic.
 using NotImplementedException = ::duckdb::NotImplementedException;
+using IOException = ::duckdb::IOException;             // Added alias
+using InternalException = ::duckdb::InternalException; // Added alias
 // Add other common exception aliases if needed, e.g.:
 // using IOException = ::duckdb::IOException;
 // using InternalException = ::duckdb::InternalException;

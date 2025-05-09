@@ -65,7 +65,7 @@ void DeleteNodeFromMapAndFreeBlock(::duckdb::row_t row_id, ::duckdb::AttachedDat
 	// This function would encapsulate the ART delete logic AND the
 	// allocator->Free() call.
 	// V2 NOTE: StorageManager::FreeBlock adds to graph.lmd free list. RowID map removal by IShadowStorageService.
-	throw ::duckdb::NotImplementedException(
+	throw common::NotImplementedException(
 	    "Persistent DeleteNodeFromMapAndFreeBlock is not implemented. V2 separates responsibilities.");
 }
 
@@ -73,7 +73,7 @@ void DeleteNodeFromMapAndFreeBlock(::duckdb::row_t row_id, ::duckdb::AttachedDat
 ::duckdb::BufferHandle GetNodeBuffer(common::IndexPointer node_ptr, ::duckdb::AttachedDatabase &db,
                                      ::duckdb::FixedSizeAllocator &allocator, bool write_lock) {
 	if (node_ptr.Get() == 0) { // Corrected IsValid() check
-		throw ::duckdb::IOException("Invalid node pointer provided to GetNodeBuffer.");
+		throw common::IOException("Invalid node pointer provided to GetNodeBuffer.");
 	}
 	// V2 NOTE: This function will change significantly. It will use StorageManager's internal cache
 	// and custom file I/O for graph.lmd, not DuckDB BufferManager for graph.lmd.
@@ -90,7 +90,7 @@ void PersistMetadata(common::IndexPointer metadata_ptr, ::duckdb::AttachedDataba
                      ::duckdb::FixedSizeAllocator &allocator, const LmDiskannMetadata &metadata) {
 
 	if (metadata_ptr.Get() == 0) { // Corrected IsValid() check
-		throw ::duckdb::InternalException("Cannot persist LM_DISKANN metadata: metadata pointer is invalid.");
+		throw common::InternalException("Cannot persist LM_DISKANN metadata: metadata pointer is invalid.");
 	}
 	// V2 NOTE: This function will change. Metadata is managed by IShadowStorageService in diskann_store.duckdb.
 	// StorageManager::SaveIndexContents will trigger IShadowStorageService to save its metadata.
@@ -193,7 +193,7 @@ common::row_t GetEntryPointRowId(common::IndexPointer graph_entry_point_ptr, ::d
 common::row_t GetRandomNodeID(::duckdb::AttachedDatabase &db, ::duckdb::FixedSizeAllocator &allocator) {
 	// V2 NOTE: This would query IShadowStorageService for a random RowID from its mapping table.
 	// Printer::Warning("GetRandomNodeID not implemented, returning invalid rowid.");
-	return ::duckdb::NumericLimits<::duckdb::row_t>::Maximum();
+	return common::NumericLimits<common::row_t>::Maximum();
 }
 
 } // namespace core
