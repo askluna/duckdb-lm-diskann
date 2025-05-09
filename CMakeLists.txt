@@ -46,11 +46,24 @@ add_subdirectory(src/lm_diskann)
 # Build the static extension
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 
-# Link hwy::hwy to the static extension
 target_link_libraries(${EXTENSION_NAME} hwy::hwy)
+target_include_directories(${EXTENSION_NAME}
+    PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}"                   # Project root for HWY_TARGET_INCLUDE
+        "${CMAKE_CURRENT_LIST_DIR}/src/include"       # If your extension needs headers from here
+        "${SIMSIMD_INCLUDE_DIR}"                      # For SimSIMD headers
+)
+
 
 # Build the loadable extension, passing hwy::hwy as a library
 build_loadable_extension(${TARGET_NAME} "hwy::hwy" ${EXTENSION_SOURCES})
+
+target_include_directories(${LOADABLE_EXTENSION_NAME}
+    PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}"                   # Project root for HWY_TARGET_INCLUDE
+        "${CMAKE_CURRENT_LIST_DIR}/src/include"       # If your extension needs headers from here
+        "${SIMSIMD_INCLUDE_DIR}"                      # For SimSIMD headers
+)
 
 install(
   TARGETS ${EXTENSION_NAME}

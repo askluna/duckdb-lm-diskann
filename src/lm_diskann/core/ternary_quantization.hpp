@@ -67,6 +67,8 @@
 //  • `dims`: Can be any positive integer; SIMD kernels handle tails correctly.
 //
 //====================================================================
+#pragma once
+
 #ifndef LM_DISKANN_TERNARY_HPP
 #define LM_DISKANN_TERNARY_HPP
 
@@ -89,11 +91,11 @@
 #endif
 
 // Highway specific includes
-#include <hwy/hwy.h>
+#include <hwy/highway.h>
 
 // For hwy::contrib::algo::SumsOf (if used directly for byte summation, ensure it's appropriate)
 // #include "hwy/contrib/algo/transform-inl.h"
-#include "hwy/contrib/tables/tables-inl.h" // For SetTable etc.
+// #include <hwy/contrib/tables/tables-inl.h> // For SetTable etc.
 
 // Required for HWY_TARGET_INCLUDE and HWY_DYNAMIC_DISPATCH
 // This definition points to the current file, indicating that this file contains

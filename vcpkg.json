@@ -1,7 +1,12 @@
 {
+  "vcpkg-configuration": {
+    "overlay-ports": [
+      "./vcpkg_ports"
+    ]
+  },
   "dependencies": [
-    "vcpkg-cmake",
     "highway",
-    "simsimd"
+    "simsimd",
+    "vcpkg-cmake"
   ]
 }
