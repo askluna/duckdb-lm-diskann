@@ -5,11 +5,13 @@
   // (Choose the correct platform: osx, linux, or windows)
   "terminal.integrated.env.osx": {
       "GEN": "ninja",
-      "VCPKG_TOOLCHAIN_PATH": "${workspaceFolder}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+      "VCPKG_TOOLCHAIN_PATH": "${workspaceFolder}/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "LOCAL_SAFETY_CHECKS": "1"
   },
   "terminal.integrated.env.linux": {
       "GEN": "ninja",
-      "VCPKG_TOOLCHAIN_PATH": "${workspaceFolder}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+      "VCPKG_TOOLCHAIN_PATH": "${workspaceFolder}/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "LOCAL_SAFETY_CHECKS": "1"
   },
 
   // --- CMake Tools Settings ---
@@ -19,6 +21,7 @@
 
   // 2. Pass Configuration Arguments to CMake:
   "cmake.configureArgs": [
+      "-DENABLE_LOCAL_DEV_SAFETY_CHECKS=ON",
       "-DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang",
       "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++",
       // If using vcpkg and want CMake Tools to use it:
