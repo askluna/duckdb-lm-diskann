@@ -65,7 +65,47 @@ float ComputeApproxSimilarityTernary(const float *query_float_ptr, const Ternary
  * @return The calculated distance.
  */
 template <typename T_QUERY, typename T_NODE>
-float CalculateDistance(const T_QUERY *query_ptr, const T_NODE *node_vector_ptr, const LmDiskannConfig &config);
+float CalculateDistance(const T_QUERY *query_ptr, const T_NODE *node_vector_ptr, const LmDiskannConfig &config) {
+	if (!query_ptr || !node_vector_ptr) {
+		// Assuming ::duckdb::InvalidInputException is available via included headers
+		// (e.g., from common/duckdb_types.hpp or index_config.hpp if it includes duckdb headers)
+		// If not, you might need to include the specific duckdb exception header here,
+		// or use a more generic std::runtime_error or std::invalid_argument.
+		// Per project guidelines, exceptions are preferred.
+		throw ::duckdb::InvalidInputException("Null pointer passed to CalculateDistance");
+	}
+	if (config.dimensions == 0) {
+		throw ::duckdb::InvalidInputException("Dimensions cannot be zero in CalculateDistance");
+	}
+
+	const float *query_float_ptr_actual = nullptr;
+	std::vector<float> temp_query_float_vector; // Consider allocating outside if performance critical and called often
+
+	if constexpr (std::is_same_v<T_QUERY, float>) {
+		query_float_ptr_actual = reinterpret_cast<const float *>(query_ptr);
+	} else {
+		temp_query_float_vector.resize(config.dimensions);
+		// ConvertToFloat is already defined in this header
+		ConvertToFloat<T_QUERY>(query_ptr, temp_query_float_vector.data(), config.dimensions);
+		query_float_ptr_actual = temp_query_float_vector.data();
+	}
+
+	const float *node_float_ptr_actual = nullptr;
+	std::vector<float> temp_node_float_vector; // Same consideration for allocation
+
+	if constexpr (std::is_same_v<T_NODE, float>) {
+		node_float_ptr_actual = reinterpret_cast<const float *>(node_vector_ptr);
+	} else {
+		temp_node_float_vector.resize(config.dimensions);
+		// ConvertToFloat is already defined in this header
+		ConvertToFloat<T_NODE>(node_vector_ptr, temp_node_float_vector.data(), config.dimensions);
+		node_float_ptr_actual = temp_node_float_vector.data();
+	}
+
+	// ComputeExactDistanceFloat is declared in this header, its definition can remain in distance.cpp
+	return ComputeExactDistanceFloat(query_float_ptr_actual, node_float_ptr_actual, config.dimensions,
+	                                 config.metric_type);
+}
 
 /**
  * @brief Computes the approximate distance using the query vector and a

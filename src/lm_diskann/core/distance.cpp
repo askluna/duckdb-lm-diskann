@@ -179,41 +179,5 @@ bool CompressVectorForEdge(const float *input_vector, ::duckdb::data_ptr_t outpu
 	return true;
 }
 
-template <typename T_QUERY, typename T_NODE>
-float CalculateDistance(const T_QUERY *query_ptr, const T_NODE *node_vector_ptr, const LmDiskannConfig &config) {
-	if (!query_ptr || !node_vector_ptr) {
-		// Assuming ::duckdb::InvalidInputException is available via included headers
-		throw ::duckdb::InvalidInputException("Null pointer passed to CalculateDistance");
-	}
-	if (config.dimensions == 0) {
-		throw ::duckdb::InvalidInputException("Dimensions cannot be zero in CalculateDistance");
-	}
-
-	const float *query_float_ptr_actual = nullptr;
-	std::vector<float> temp_query_float_vector;
-
-	if constexpr (std::is_same_v<T_QUERY, float>) {
-		query_float_ptr_actual = reinterpret_cast<const float *>(query_ptr);
-	} else {
-		temp_query_float_vector.resize(config.dimensions);
-		ConvertToFloat<T_QUERY>(query_ptr, temp_query_float_vector.data(), config.dimensions);
-		query_float_ptr_actual = temp_query_float_vector.data();
-	}
-
-	const float *node_float_ptr_actual = nullptr;
-	std::vector<float> temp_node_float_vector;
-
-	if constexpr (std::is_same_v<T_NODE, float>) {
-		node_float_ptr_actual = reinterpret_cast<const float *>(node_vector_ptr);
-	} else {
-		temp_node_float_vector.resize(config.dimensions);
-		ConvertToFloat<T_NODE>(node_vector_ptr, temp_node_float_vector.data(), config.dimensions);
-		node_float_ptr_actual = temp_node_float_vector.data();
-	}
-
-	return ComputeExactDistanceFloat(query_float_ptr_actual, node_float_ptr_actual, config.dimensions,
-	                                 config.metric_type);
-}
-
 } // namespace core
 } // namespace diskann
