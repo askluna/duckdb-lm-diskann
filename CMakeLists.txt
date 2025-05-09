@@ -42,6 +42,47 @@ add_subdirectory(src/lm_diskann)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 
+# Mark DuckDB's core include directory as a SYSTEM include path for your extension.
+# This should be applied regardless of safety check level.
+target_include_directories(${EXTENSION_NAME} SYSTEM
+    PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/duckdb/src/include"
+        # You might need to add other specific duckdb/third_party include paths here
+        # if they also generate errors, e.g.:
+        # "${CMAKE_CURRENT_LIST_DIR}/duckdb/third_party/fmt/include"
+)
+
+# Conditionally apply strict compiler flags to the static extension target
+if(DEFINED ENV{LOCAL_SAFETY_CHECKS} AND $ENV{LOCAL_SAFETY_CHECKS} STREQUAL "1")
+    message(STATUS "LOCAL_SAFETY_CHECKS is ON (set to '1'). Applying strict compiler flags and sanitizers to ${EXTENSION_NAME}.")
+    target_compile_options(${EXTENSION_NAME} PRIVATE
+        -g3                     # Enhanced debug information
+        -fno-omit-frame-pointer # For more reliable stack traces with sanitizers
+
+        -Wall                   # Enable many common, important warnings
+        -Wextra                 # Enable additional useful warnings
+        -Wpedantic              # Issue all warnings demanded by strict ISO C++
+
+        -Werror                 # Treat all warnings (for this target's code) as errors
+
+        # Specific warnings you want to enable for your code
+        -Wshadow                # Warn when a local variable shadows another
+        -Wconversion            # Warn on implicit conversions that may alter a value
+        -Wsign-conversion       # Warn for implicit sign conversions
+        -Wold-style-cast        # Warn for C-style casts
+        -Wdouble-promotion      # Warn when float is promoted to double
+        -Wunused-parameter      # Warn on unused function parameters
+        -Wunused-variable       # Warn on unused local variables
+        -Wimplicit-int-float-conversion # Warn on potentially lossy int to float conversions
+
+        # -- Add Sanitizers Here --
+        -fsanitize=address,undefined # Add ,leak if appropriate for your platform/needs
+        -fno-sanitize-recover=all    # Crash immediately on sanitizer errors
+
+        # Add any other specific warnings you find useful here
+    )
+endif()
+
 target_include_directories(${EXTENSION_NAME}
     PRIVATE
         "${CMAKE_CURRENT_LIST_DIR}"                   # Project root for HWY_TARGET_INCLUDE
