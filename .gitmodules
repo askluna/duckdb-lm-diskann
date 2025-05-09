@@ -4,3 +4,6 @@
 [submodule "duckdb"]
 	path = duckdb
 	url = https://github.com/ShravanSunder/duckdb
+[submodule "vcpkg"]
+	path = vcpkg
+	url = https://github.com/microsoft/vcpkg
