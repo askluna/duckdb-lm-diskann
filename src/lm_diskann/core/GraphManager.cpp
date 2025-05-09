@@ -7,6 +7,7 @@
 
 #include "../common/ann.hpp"
 #include "../common/duckdb_types.hpp"
+#include "GraphNode.hpp" // Added include for GraphNode
 #include "ISearcher.hpp"
 #include "IStorageManager.hpp"
 #include "distance.hpp" // For diskann::Distance* functions
@@ -81,10 +82,11 @@ bool GraphManager::AddNode(common::row_t row_id, const float *vector_data, commo
 	}
 
 	// 2. Initialize the node block (zero out, set neighbor count to 0).
-	NodeAccessors::InitializeNodeBlock(new_node_block_data_ptr, block_size_bytes_, node_layout_);
+	diskann::core::GraphNode::InitializeNodeBlock(new_node_block_data_ptr, block_size_bytes_, node_layout_);
 
 	// 3. Get mutable raw vector pointer and copy/quantize vector_data.
-	unsigned char *raw_vec_storage_ptr = NodeAccessors::GetRawNodeVectorMutable(new_node_block_data_ptr, node_layout_);
+	unsigned char *raw_vec_storage_ptr =
+	    diskann::core::GraphNode::GetRawNodeVectorMutable(new_node_block_data_ptr, node_layout_);
 	if (!raw_vec_storage_ptr) {
 		// This should not happen if InitializeNodeBlock and layout are correct.
 		// If it does, the block might be unusable. Consider deallocating.
@@ -137,10 +139,10 @@ bool GraphManager::AddNode(common::row_t row_id, const float *vector_data, commo
 	RobustPrune(node_ptr_out, vector_data, initial_candidate_row_ids, config_);
 
 	// 7. Update the new node's neighbor list with the results from RobustPrune.
-	NodeAccessors::SetNeighborCount(new_node_block_data_ptr, node_layout_,
-	                                static_cast<uint16_t>(initial_candidate_row_ids.size()));
+	diskann::core::GraphNode::SetNeighborCount(new_node_block_data_ptr, node_layout_,
+	                                           static_cast<uint16_t>(initial_candidate_row_ids.size()));
 	common::row_t *new_node_neighbors_ptr =
-	    NodeAccessors::GetNeighborIDsPtrMutable(new_node_block_data_ptr, node_layout_);
+	    diskann::core::GraphNode::GetNeighborIDsPtrMutable(new_node_block_data_ptr, node_layout_);
 	if (!new_node_neighbors_ptr) {
 		// This implies a serious issue with node layout or block data.
 		// storage_manager_->DeallocateNodeBlock(node_ptr_out); // Potentially
@@ -215,7 +217,7 @@ bool GraphManager::GetNodeVector(common::IndexPointer node_ptr, float *vector_ou
 		return false;
 	}
 
-	const unsigned char *raw_vector_ptr = NodeAccessors::GetRawNodeVector(node_block_data, node_layout_);
+	const unsigned char *raw_vector_ptr = diskann::core::GraphNode::GetRawNodeVector(node_block_data, node_layout_);
 	if (!raw_vector_ptr) {
 		return false;
 	}
@@ -238,8 +240,8 @@ bool GraphManager::GetNeighbors(common::IndexPointer node_ptr, std::vector<commo
 		return false;
 	}
 
-	uint16_t count = NodeAccessors::GetNeighborCount(node_block_data, node_layout_);
-	const common::row_t *ids_ptr = NodeAccessors::GetNeighborIDsPtr(node_block_data, node_layout_);
+	uint16_t count = diskann::core::GraphNode::GetNeighborCount(node_block_data, node_layout_);
+	const common::row_t *ids_ptr = diskann::core::GraphNode::GetNeighborIDsPtr(node_block_data, node_layout_);
 
 	if (!ids_ptr) {
 		// Should not happen if layout is correct and block is valid
@@ -283,7 +285,8 @@ void GraphManager::RobustPrune(common::IndexPointer node_to_connect_ptr, const f
 		common::const_data_ptr_t candidate_block_data = storage_manager_->GetNodeBlockData(candidate_ptr_val);
 		if (!candidate_block_data)
 			continue;
-		const unsigned char *candidate_raw_vector_ptr = NodeAccessors::GetRawNodeVector(candidate_block_data, node_layout_);
+		const unsigned char *candidate_raw_vector_ptr =
+		    diskann::core::GraphNode::GetRawNodeVector(candidate_block_data, node_layout_);
 
 		if (!candidate_raw_vector_ptr ||
 		    !diskann::common::ConvertRawVectorToFloat(candidate_raw_vector_ptr, temp_candidate_vector.data(),
@@ -334,7 +337,7 @@ void GraphManager::RobustPrune(common::IndexPointer node_to_connect_ptr, const f
 		common::const_data_ptr_t p_block_data = storage_manager_->GetNodeBlockData(p_ptr_val);
 		if (!p_block_data)
 			continue;
-		const unsigned char *p_raw_vector_ptr = NodeAccessors::GetRawNodeVector(p_block_data, node_layout_);
+		const unsigned char *p_raw_vector_ptr = diskann::core::GraphNode::GetRawNodeVector(p_block_data, node_layout_);
 		std::vector<float> p_float_vector(config_param.dimensions);
 		if (!p_raw_vector_ptr ||
 		    !diskann::common::ConvertRawVectorToFloat(p_raw_vector_ptr, p_float_vector.data(), config_param.dimensions,
@@ -393,8 +396,9 @@ void GraphManager::RobustPrune(common::IndexPointer node_to_connect_ptr, const f
 	}
 
 	uint16_t final_count = static_cast<uint16_t>(final_selected_neighbors_rowids.size());
-	NodeAccessors::SetNeighborCount(node_to_connect_mutable_data, node_layout_, final_count);
-	common::row_t *dest_ids_ptr = NodeAccessors::GetNeighborIDsPtrMutable(node_to_connect_mutable_data, node_layout_);
+	diskann::core::GraphNode::SetNeighborCount(node_to_connect_mutable_data, node_layout_, final_count);
+	common::row_t *dest_ids_ptr =
+	    diskann::core::GraphNode::GetNeighborIDsPtrMutable(node_to_connect_mutable_data, node_layout_);
 	// TODO: Need to handle compressed edge data if use_ternary_quantization is true.
 	// The logic from GraphOperations::RobustPrune that copied compressed data needs
 	// to be integrated here, using CompressFloatVectorForEdge.
@@ -660,7 +664,7 @@ float GraphManager::CalculateDistanceInternal(common::IndexPointer node_ptr, con
 	if (!node_block_data) {
 		return common::NumericLimits<float>::Maximum();
 	}
-	const unsigned char *raw_node_vector_ptr = NodeAccessors::GetRawNodeVector(node_block_data, node_layout_);
+	const unsigned char *raw_node_vector_ptr = diskann::core::GraphNode::GetRawNodeVector(node_block_data, node_layout_);
 	// Use the common utility function, passing the node_vector_type from config_
 	if (!raw_node_vector_ptr || !diskann::common::ConvertRawVectorToFloat(raw_node_vector_ptr, node_vec.data(),
 	                                                                      dimensions, config_.node_vector_type)) {

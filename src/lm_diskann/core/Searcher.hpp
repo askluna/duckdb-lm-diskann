@@ -23,8 +23,6 @@ class IStorageManager;
 } // namespace core
 } // namespace diskann
 
-// Forward declaration for LmDiskannScanState REMOVED
-
 namespace diskann {
 namespace core {
 

@@ -8,7 +8,6 @@
 // Core interfaces and types
 #include "../common/ann.hpp"
 #include "../common/duckdb_types.hpp"
-// #include "../db/LmDiskannScanState.hpp" // REMOVED: LmDiskannScanState is not used directly by core searcher
 #include "IGraphManager.hpp"
 #include "IStorageManager.hpp"
 #include "distance.hpp" // For ComputeExactDistanceFloat and ConvertRawVectorToFloat (assuming moved here)
