@@ -14,17 +14,19 @@ LmDiskannScanState::LmDiskannScanState(const ::duckdb::Vector &query_vec, // The
 	// Store a copy of the query vector's data.
 	// query_vector_storage is already initialized with the correct type.
 	if (query_vec.GetVectorType() == ::duckdb::VectorType::FLAT_VECTOR) {
-		::duckdb::VectorOperations::Copy(query_vec, query_vector_storage, query_vec.Size(), 0, 0);
-		query_vector_ptr = ::duckdb::FlatVector::GetData<float>(query_vector_storage);
+		::duckdb::VectorOperations::Copy(query_vec, query_vector_storage, 1, 0, 0);
+		query_vector_ptr = ::duckdb::FlatVector::GetData<float>(::duckdb::ArrayVector::GetEntry(query_vector_storage));
 	} else {
 		// If not flat, create a temporary flat vector, copy to it, then copy to storage.
 		::duckdb::Vector flat_query_vec(query_vec.GetType());
 		// flat_query_vec is already initialized by its constructor with type
-		::duckdb::VectorOperations::Copy(query_vec, flat_query_vec, query_vec.Size(), 0, 0);
+		::duckdb::VectorOperations::Copy(query_vec, flat_query_vec, 1, 0, 0);
 
 		// query_vector_storage is already initialized, just copy data into it.
-		::duckdb::VectorOperations::Copy(flat_query_vec, query_vector_storage, flat_query_vec.Size(), 0, 0);
-		query_vector_ptr = ::duckdb::FlatVector::GetData<float>(query_vector_storage);
+		// Note: flat_query_vec is now flat, but it's still an ARRAY type if query_vec was.
+		// So, query_vector_storage will also be an ARRAY type after this copy.
+		::duckdb::VectorOperations::Copy(flat_query_vec, query_vector_storage, 1, 0, 0);
+		query_vector_ptr = ::duckdb::FlatVector::GetData<float>(::duckdb::ArrayVector::GetEntry(query_vector_storage));
 	}
 	// result_row_ids is default initialized (empty vector)
 }
