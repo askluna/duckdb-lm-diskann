@@ -7,7 +7,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Add project-wide CXX flags
-add_compile_options(-Wno-deprecated-literal-operator)
+if (NOT MSVC)
+    add_compile_options(-Wno-deprecated-literal-operator)
+endif()
 
 # Set extension name here
 set(TARGET_NAME lm_diskann)
