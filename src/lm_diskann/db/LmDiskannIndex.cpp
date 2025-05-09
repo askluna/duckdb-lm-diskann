@@ -274,6 +274,7 @@ LmDiskannIndex::~LmDiskannIndex() = default;
 
 // --- New Public Wrapper Methods ---
 void LmDiskannIndex::PublicMarkDirty(bool dirty_state) {
+	(void)dirty_state; // Marked as unused
 	// This logic is now primarily in Coordinator::LoadIndex or its managers.
 	// LmDiskannIndex might still need to translate IndexStorageInfo if
 	// Coordinator or its StorageManager cannot directly use it.
@@ -381,6 +382,7 @@ void LmDiskannIndex::PublicConvertNodeVectorToFloat(::duckdb::const_data_ptr_t r
  * @param index_lock Lock protecting the index state.
  */
 void LmDiskannIndex::CommitDrop(::duckdb::IndexLock &index_lock) {
+	(void)index_lock; // Marked as unused
 	if (coordinator_) {
 		coordinator_->HandleCommitDrop(); // Delegate drop logic
 	}
@@ -400,6 +402,7 @@ void LmDiskannIndex::CommitDrop(::duckdb::IndexLock &index_lock) {
  */
 void LmDiskannIndex::Delete(::duckdb::IndexLock &lock, ::duckdb::DataChunk &entries,
                             ::duckdb::Vector &row_identifiers) {
+	(void)lock; // Marked as unused
 	row_identifiers.Flatten(entries.size());
 	auto row_ids_data = ::duckdb::FlatVector::GetData<::duckdb::row_t>(row_identifiers);
 
@@ -441,6 +444,7 @@ void LmDiskannIndex::Delete(::duckdb::IndexLock &lock, ::duckdb::DataChunk &entr
  */
 ::duckdb::ErrorData LmDiskannIndex::Insert(::duckdb::IndexLock &lock, ::duckdb::DataChunk &data,
                                            ::duckdb::Vector &row_ids) {
+	(void)lock; // Marked as unused
 	if (data.size() == 0) {
 		return ::duckdb::ErrorData();
 	}
@@ -509,11 +513,14 @@ void LmDiskannIndex::Delete(::duckdb::IndexLock &lock, ::duckdb::DataChunk &entr
  * @details Used by DuckDB for checkpointing. Fills an IndexStorageInfo struct
  *          with allocator information. Metadata pointer persistence is handled
  * internally.
- * @param get_buffers Flag indicating whether buffer handles are needed (ignored
- * here).
+ * @param options Options for retrieving storage information.
+ * @param to_wal Flag indicating whether to include information for WAL (write-ahead logging).
  * @return IndexStorageInfo containing allocator details.
  */
-::duckdb::IndexStorageInfo LmDiskannIndex::GetStorageInfo(bool get_buffers) {
+::duckdb::IndexStorageInfo
+LmDiskannIndex::GetStorageInfo(const ::duckdb::case_insensitive_map_t<::duckdb::Value> &options, const bool to_wal) {
+	(void)options; // Marked as unused
+	(void)to_wal;  // Marked as unused
 	if (!coordinator_) {
 		throw ::duckdb::InternalException("Coordinator not initialized in GetStorageInfo");
 	}
@@ -532,9 +539,11 @@ void LmDiskannIndex::Delete(::duckdb::IndexLock &lock, ::duckdb::DataChunk &entr
 
 /**
  * @brief Estimates the in-memory size of the index.
+ * @param state Index lock.
  * @return Estimated size in bytes (allocator + map overhead).
  */
-idx_t LmDiskannIndex::GetInMemorySize() {
+idx_t LmDiskannIndex::GetInMemorySize(::duckdb::IndexLock &state) {
+	(void)state; // Marked as unused
 	if (coordinator_) {
 		return coordinator_->GetInMemorySize();
 	}
@@ -549,6 +558,8 @@ idx_t LmDiskannIndex::GetInMemorySize() {
  * @return Always returns false (not implemented).
  */
 bool LmDiskannIndex::MergeIndexes(::duckdb::IndexLock &state, BoundIndex &other_index) {
+	(void)state;       // Marked as unused
+	(void)other_index; // Marked as unused
 	throw ::duckdb::NotImplementedException("LmDiskannIndex::MergeIndexes not implemented");
 	return false;
 }
@@ -559,6 +570,7 @@ bool LmDiskannIndex::MergeIndexes(::duckdb::IndexLock &state, BoundIndex &other_
  * @param state Index lock.
  */
 void LmDiskannIndex::Vacuum(::duckdb::IndexLock &state) {
+	(void)state; // Marked as unused
 	if (coordinator_) {
 		coordinator_->PerformVacuum(); // Delegate vacuum logic
 	}
@@ -574,6 +586,8 @@ void LmDiskannIndex::Vacuum(::duckdb::IndexLock &state) {
  * @return A string describing the index state.
  */
 ::duckdb::string LmDiskannIndex::VerifyAndToString(::duckdb::IndexLock &state, const bool only_verify) {
+	(void)state;       // Marked as unused
+	(void)only_verify; // Marked as unused
 	::duckdb::string result = "LmDiskannIndex [Not Verified]";
 	if (!coordinator_) {
 		result += " - Coordinator not initialized!";
@@ -608,8 +622,9 @@ void LmDiskannIndex::Vacuum(::duckdb::IndexLock &state) {
  * @param state Index lock.
  */
 void LmDiskannIndex::VerifyAllocations(::duckdb::IndexLock &state) {
-	// TODO: Check if allocator has verification method
-	// if (db_state_.allocator) { db_state_.allocator->Verify(); }
+	(void)state; // Marked as unused
+	             // TODO: Check if allocator has verification method
+	             // if (db_state_.allocator) { db_state_.allocator->Verify(); }
 }
 
 /**
@@ -622,6 +637,9 @@ void LmDiskannIndex::VerifyAllocations(::duckdb::IndexLock &state) {
  */
 ::duckdb::string LmDiskannIndex::GetConstraintViolationMessage(::duckdb::VerifyExistenceType verify_type,
                                                                idx_t failed_index, ::duckdb::DataChunk &input) {
+	(void)verify_type;  // Marked as unused
+	(void)failed_index; // Marked as unused
+	(void)input;        // Marked as unused
 	return "Constraint violation in LM_DISKANN index (Not supported)";
 }
 
@@ -638,6 +656,7 @@ void LmDiskannIndex::VerifyAllocations(::duckdb::IndexLock &state) {
  */
 ::duckdb::unique_ptr<::duckdb::IndexScanState>
 LmDiskannIndex::InitializeScan(::duckdb::ClientContext &context, const ::duckdb::Vector &query_vector, idx_t k) {
+	(void)context; // Marked as unused
 	if (query_vector.GetType().id() != ::duckdb::LogicalTypeId::ARRAY ||
 	    ::duckdb::ArrayType::GetChildType(query_vector.GetType()).id() != ::duckdb::LogicalTypeId::FLOAT) {
 		throw ::duckdb::BinderException("LM_DISKANN query vector must be ARRAY<FLOAT>.");
@@ -708,7 +727,7 @@ idx_t LmDiskannIndex::Scan(::duckdb::IndexScanState &state, ::duckdb::Vector &re
 		// scan_state.result_row_ids so the next Scan call provides the next batch.
 		if (output_count > 0 && output_count <= scan_state.result_row_ids.size()) {
 			scan_state.result_row_ids.erase(scan_state.result_row_ids.begin(),
-			                                scan_state.result_row_ids.begin() + output_count);
+			                                scan_state.result_row_ids.begin() + static_cast<ptrdiff_t>(output_count));
 		} else {
 			// If no results were output, ensure the state vector is clear to prevent
 			// infinite loops
@@ -730,6 +749,7 @@ idx_t LmDiskannIndex::Scan(::duckdb::IndexScanState &state, ::duckdb::Vector &re
  * @param estimated_cardinality Estimated number of rows (unused currently).
  */
 void LmDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
+	(void)estimated_cardinality; // Marked as unused
 	// This logic is now primarily in Coordinator::InitializeIndex
 	// or delegated to its managers.
 	// LmDiskannIndex might still need to do some high-level DuckDB setup
@@ -781,6 +801,7 @@ void LmDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
  * @param storage_info Storage information provided by DuckDB during load.
  */
 void LmDiskannIndex::LoadFromStorage(const ::duckdb::IndexStorageInfo &storage_info) {
+	(void)storage_info; // Marked as unused
 	// This logic is now primarily in Coordinator::LoadIndex or its managers.
 	// LmDiskannIndex might still need to translate IndexStorageInfo if
 	// Coordinator or its StorageManager cannot directly use it.
