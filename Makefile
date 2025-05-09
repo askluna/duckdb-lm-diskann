@@ -12,7 +12,7 @@ EXTRA_CMAKE_FLAGS := \
     -DCMAKE_C_COMPILER:FILEPATH=/opt/homebrew/opt/llvm/bin/clang \
     -DCMAKE_CXX_COMPILER:FILEPATH=/opt/homebrew/opt/llvm/bin/clang++ \
     -DCMAKE_OSX_SYSROOT:PATH=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.4.sdk \
-    -DCMAKE_CXX_FLAGS:STRING="-Wno-deprecated-literal-operator" \
+    -DCMAKE_CXX_FLAGS:STRING="-Wno-deprecated-literal-operator  -pedantic-errors" \
     -DCMAKE_TOOLCHAIN_FILE:FILEPATH=${PROJ_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake \
     -G Ninja
 

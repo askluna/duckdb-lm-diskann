@@ -1,7 +1,5 @@
 #define LMDK_TERNARY_IMPL
 
-#pragma once
-
 // This path assumes that the include directories are set up in CMake
 // such that "core/" is a recognized path.
 // If src/lm_diskann/ is an include directory, this should resolve.
