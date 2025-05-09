@@ -116,5 +116,104 @@ float ComputeApproxSimilarityTernary(const float *query_float_ptr,
 	return static_cast<float>(raw_score);
 }
 
+float CalculateApproxDistance(const float *query_ptr, ::duckdb::const_data_ptr_t compressed_neighbor_ptr,
+                              const LmDiskannConfig &config) {
+	if (!query_ptr || !compressed_neighbor_ptr) {
+		throw ::duckdb::InvalidInputException("Null pointer passed to CalculateApproxDistance");
+	}
+	if (config.dimensions == 0) {
+		throw ::duckdb::InvalidInputException("Dimensions cannot be zero in CalculateApproxDistance");
+	}
+
+	// words_per_plane is the number of uint64_t elements.
+	// WordsPerPlane is from ternary_quantization.hpp, which is included in this file.
+	const size_t words_per_plane = WordsPerPlane(config.dimensions);
+
+	TernaryPlanesView neighbor_planes_view;
+	neighbor_planes_view.positive_plane = compressed_neighbor_ptr;
+	// The negative plane starts immediately after the positive plane.
+	// Each plane has size: words_per_plane * sizeof(uint64_t) bytes.
+	neighbor_planes_view.negative_plane = compressed_neighbor_ptr + (words_per_plane * sizeof(uint64_t));
+	neighbor_planes_view.dimensions = config.dimensions;
+	neighbor_planes_view.words_per_plane = words_per_plane;
+
+	// Compute raw similarity score (higher is better)
+	// ComputeApproxSimilarityTernary is defined in this file (distance.cpp)
+	float similarity = ComputeApproxSimilarityTernary(query_ptr, neighbor_planes_view, config.dimensions);
+
+	// Convert similarity to distance based on metric (lower is better for distance)
+	switch (config.metric_type) {
+	case common::LmDiskannMetricType::IP:
+		// For IP, similarity is dot product. Distance is often -dot_product.
+		return -similarity;
+	case common::LmDiskannMetricType::COSINE:
+		// For Cosine, similarity is cosine_similarity. Distance is 1 - cosine_similarity.
+		return 1.0f - similarity;
+	case common::LmDiskannMetricType::L2:
+		// Ternary quantization as implemented (approximating dot product/cosine)
+		// is not a direct approximation for L2 distance.
+		throw ::duckdb::InvalidInputException(
+		    "L2 metric is not directly compatible with the current ternary "
+		    "CalculateApproxDistance. Ternary approximation is for IP/Cosine-like similarities.");
+	default:
+		throw ::duckdb::InvalidInputException("Unsupported metric type in CalculateApproxDistance");
+	}
+}
+
+bool CompressVectorForEdge(const float *input_vector, ::duckdb::data_ptr_t output_compressed_vector,
+                           const LmDiskannConfig &config) {
+	if (!input_vector || !output_compressed_vector) {
+		return false;
+	}
+	if (config.dimensions == 0) {
+		return false;
+	}
+
+	const size_t words_per_plane = WordsPerPlane(config.dimensions);
+
+	uint64_t *pos_plane_ptr = reinterpret_cast<uint64_t *>(output_compressed_vector);
+	uint64_t *neg_plane_ptr = reinterpret_cast<uint64_t *>(output_compressed_vector + words_per_plane * sizeof(uint64_t));
+
+	EncodeTernary<float>(input_vector, pos_plane_ptr, neg_plane_ptr, config.dimensions);
+
+	return true;
+}
+
+template <typename T_QUERY, typename T_NODE>
+float CalculateDistance(const T_QUERY *query_ptr, const T_NODE *node_vector_ptr, const LmDiskannConfig &config) {
+	if (!query_ptr || !node_vector_ptr) {
+		// Assuming ::duckdb::InvalidInputException is available via included headers
+		throw ::duckdb::InvalidInputException("Null pointer passed to CalculateDistance");
+	}
+	if (config.dimensions == 0) {
+		throw ::duckdb::InvalidInputException("Dimensions cannot be zero in CalculateDistance");
+	}
+
+	const float *query_float_ptr_actual = nullptr;
+	std::vector<float> temp_query_float_vector;
+
+	if constexpr (std::is_same_v<T_QUERY, float>) {
+		query_float_ptr_actual = reinterpret_cast<const float *>(query_ptr);
+	} else {
+		temp_query_float_vector.resize(config.dimensions);
+		ConvertToFloat<T_QUERY>(query_ptr, temp_query_float_vector.data(), config.dimensions);
+		query_float_ptr_actual = temp_query_float_vector.data();
+	}
+
+	const float *node_float_ptr_actual = nullptr;
+	std::vector<float> temp_node_float_vector;
+
+	if constexpr (std::is_same_v<T_NODE, float>) {
+		node_float_ptr_actual = reinterpret_cast<const float *>(node_vector_ptr);
+	} else {
+		temp_node_float_vector.resize(config.dimensions);
+		ConvertToFloat<T_NODE>(node_vector_ptr, temp_node_float_vector.data(), config.dimensions);
+		node_float_ptr_actual = temp_node_float_vector.data();
+	}
+
+	return ComputeExactDistanceFloat(query_float_ptr_actual, node_float_ptr_actual, config.dimensions,
+	                                 config.metric_type);
+}
+
 } // namespace core
 } // namespace diskann

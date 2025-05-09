@@ -9,6 +9,8 @@
 #include "index_config.hpp" // Include config for TernaryPlanesView and LmDiskannMetricType
 
 #include <cstdint>
+#include <type_traits> // Added for std::is_same_v
+#include <vector>      // Added for std::vector
 
 // Forward declarations no longer needed as index_config.hpp is included
 // namespace duckdb {
@@ -99,7 +101,15 @@ bool CompressVectorForEdge(const float *input_vector, ::duckdb::data_ptr_t outpu
  * @param dimensions The number of dimensions.
  */
 template <typename T>
-void ConvertToFloat(const T *input_vector, float *output_vector, common::idx_t dimensions);
+void ConvertToFloat(const T *input_vector, float *output_vector, common::idx_t dimensions) {
+	if (!input_vector || !output_vector) {
+		// Consider: throw std::invalid_argument("Null pointer provided to ConvertToFloat");
+		return; // Or handle error as per project policy
+	}
+	for (common::idx_t i = 0; i < dimensions; ++i) {
+		output_vector[i] = static_cast<float>(input_vector[i]);
+	}
+}
 
 // Explicit instantiation for int8_t needed if definition is in .cpp
 // extern template void ConvertToFloat<int8_t>(const int8_t* input_vector,
