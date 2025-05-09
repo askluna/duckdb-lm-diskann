@@ -24,19 +24,21 @@ concurrency:
 jobs:
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.2.2
+    uses: shravansunder/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
       duckdb_version: v1.2.2
       extension_name: lm_diskann
-      ci_tools_version: v1.2.2
+      override_ci_tools_repository: shravansunder/extension-ci-tools
+      ci_tools_version: main
 
   duckdb-stable-deploy:
     name: Deploy extension binaries
     needs: duckdb-stable-build
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.2.2
+    uses: shravansunder/extension-ci-tools/.github/workflows/_extension_deploy.yml@main
     secrets: inherit
     with:
       duckdb_version: v1.2.2
       extension_name: lm_diskann
-      ci_tools_version: v1.2.2
+      override_ci_tools_repository: shravansunder/extension-ci-tools
+      ci_tools_version: main
       deploy_latest: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}

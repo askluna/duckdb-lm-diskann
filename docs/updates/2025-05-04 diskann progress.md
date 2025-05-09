@@ -9,10 +9,10 @@ Here's a breakdown of the development status for the LM-DiskANN DuckDB extension
      - `lm_diskann_storage`: Interface for storage operations (allocator, mapping, persistence - currently placeholders).
      - `lm_diskann_search`: Core beam search algorithm (`PerformSearch`).
      - `lm_diskann_distance`: Distance calculations and compression helpers.
-     - `lm_diskann_state`: Scan state definition (`LMDiskannScanState`).
+     - `lm_diskann_state`: Scan state definition (`LmDiskannScanState`).
      - `lm_diskann_index`: Main index class orchestrating operations.
    - Header files define interfaces and necessary structures.
-2. **Core Index Class (`LMDiskannIndex`):**
+2. **Core Index Class (`LmDiskannIndex`):**
    - Successfully inherits from `duckdb::BoundIndex`.
    - Constructor parses options, validates parameters, calculates layout/sizes, initializes the allocator, and handles loading/initialization flow.
    - Overrides for all required `BoundIndex` virtual methods (`Insert`, `Delete`, `Append`, `Scan`, `InitializeScan`, `GetStorageInfo`, etc.) are present, delegating logic to helper methods or modules.
@@ -46,7 +46,7 @@ Here's a breakdown of the development status for the LM-DiskANN DuckDB extension
 *(Highest Priority Blockers)*
 
 1. **Persistent RowID Mapping (ART Integration):**
-   - **Task:** Replace `std::map in_memory_rowid_map_` with `unique_ptr<ART> rowid_map_`. Implement `TryGetNodePointer`, `AllocateNode`, `DeleteNodeFromMapAndFreeBlock` using DuckDB's ART API in `lm_diskann_storage.cpp` (or keep helpers in `lm_diskann_index.cpp`). Implement persistence/loading of the ART root pointer in `PersistMetadata`/`LoadMetadata`.
+   - **Task:** Replace `std::map in_memory_rowid_map_` with `unique_ptr<ART> rowid_map_`. Implement `TryGetNodePointer`, `AllocateNode`, `DeleteNodeFromMapAndFreeBlock` using DuckDB's ART API in `lm_diskann_storage.cpp` (or keep helpers in `LmDiskannIndex.cpp`). Implement persistence/loading of the ART root pointer in `PersistMetadata`/`LoadMetadata`.
    - **Challenge:** Understanding ART API, ensuring correct key serialization (`row_t` to `ARTKey`), integrating with the `FixedSizeAllocator`, handling concurrency if needed.
 2. **Delete Queue Processing:**
    - **Task:** Implement the logic within `ProcessDeletionQueue` (likely called by `Vacuum`). This involves reading the delete queue, finding *all* nodes that refer to a deleted node, and removing that edge from their neighbor lists.
@@ -94,10 +94,10 @@ Here's a breakdown of the development status for the LM-DiskANN DuckDB extension
 - **Format:** Compresses each dimension to 2 bits (+1, 0, -1), stored efficiently in bit-planes. Offers very high compression (0.25 bytes/dimension).
 - **Distance:** Uses a specialized "ternary dot product" calculated via bitwise operations and popcounts, intended as a proxy for cosine similarity (higher score is better). It provides SIMD kernels (AVX512, AVX2, NEON) for speed.
 - **Integration Steps:**
-  1. **Add Enum Value:** Add `TERNARY` to `LMDiskannEdgeType` enum in `lm_diskann_config.hpp`.
+  1. **Add Enum Value:** Add `TERNARY` to `LmDiskannEdgeType` enum in `lm_diskann_config.hpp`.
   2. **Update Parsing:** Modify `ParseOptions` in `lm_diskann_config.cpp` to recognize `EDGE_TYPE = 'TERNARY'`.
   3. **Update Size Calculation:** Modify `GetEdgeVectorTypeSizeBytes` in `lm_diskann_config.cpp` to return `(dimensions + 3) / 4` (or `(2 * dimensions + 7) / 8`) bytes for the TERNARY type. Recalculate `block_size_bytes_` accordingly.
-  4. **Integrate Encoding:** In `lm_diskann_index.cpp::RobustPrune` (when writing final neighbors) and potentially `FindAndConnectNeighbors`, if `resolved_edge_vector_type_ == TERNARY`, call `EncodeTernary` from the header to compress neighbor vectors before writing them to the block using `LMDiskannNodeAccessors::GetCompressedNeighborPtrMutable`.
+  4. **Integrate Encoding:** In `LmDiskannIndex.cpp::RobustPrune` (when writing final neighbors) and potentially `FindAndConnectNeighbors`, if `resolved_edge_vector_type_ == TERNARY`, call `EncodeTernary` from the header to compress neighbor vectors before writing them to the block using `NodeAccessors::GetCompressedNeighborPtrMutable`.
   5. **Integrate Distance:** In `lm_diskann_distance.cpp::ComputeApproxDistance`, if `resolved_edge_vector_type_ == TERNARY`:
      - Encode the `query_ptr` (float) into temporary ternary planes using `EncodeTernary`.
      - Get the appropriate kernel using `GetKernel()`.

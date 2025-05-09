@@ -5,11 +5,13 @@
   // (Choose the correct platform: osx, linux, or windows)
   "terminal.integrated.env.osx": {
       "GEN": "ninja",
-      "VCPKG_TOOLCHAIN_PATH": "${workspaceFolder}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+      "VCPKG_TOOLCHAIN_PATH": "${workspaceFolder}/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "LOCAL_SAFETY_CHECKS": "1"
   },
   "terminal.integrated.env.linux": {
       "GEN": "ninja",
-      "VCPKG_TOOLCHAIN_PATH": "${workspaceFolder}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+      "VCPKG_TOOLCHAIN_PATH": "${workspaceFolder}/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "LOCAL_SAFETY_CHECKS": "1"
   },
 
   // --- CMake Tools Settings ---
@@ -19,10 +21,11 @@
 
   // 2. Pass Configuration Arguments to CMake:
   "cmake.configureArgs": [
+      "-DENABLE_LOCAL_DEV_SAFETY_CHECKS=ON",
       "-DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang",
       "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++",
       // If using vcpkg and want CMake Tools to use it:
-      // "-DCMAKE_TOOLCHAIN_FILE=${workspaceFolder}/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "-DCMAKE_TOOLCHAIN_FILE=${workspaceFolder}/vcpkg/scripts/buildsystems/vcpkg.cmake",
       "-DUCKDB_EXTENSION_CONFIGS=${workspaceFolder}",
       "-DCMAKE_CXX_STANDARD=20",
       "-DCMAKE_CXX_STANDARD_REQUIRED=TRUE",
@@ -54,9 +57,14 @@
   },
   "editor.formatOnSave": true,
   "editor.formatOnType": true,
+  "clangd.arguments": [
+    "-limit-results=2000"
+  ],
   "clangd.path": "/opt/homebrew/opt/llvm/bin/clangd",
   "clangd.fallbackFlags": [
-    "-std=c++20"
+    "-std=c++20",
   ],
-
+  "files.associations": {
+    "*.sql.test": "sqllogictest"
+  }
 }

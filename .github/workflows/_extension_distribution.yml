@@ -300,6 +300,13 @@ jobs:
         with:
           key: ${{ github.job }}-${{ matrix.duckdb_arch }}
 
+      - name: Install CMake and add to PATH
+        shell: cmd
+        run: |
+          choco install cmake --version=3.31.0 --force -y
+          echo "C:\Program Files\CMake\bin" >> %GITHUB_PATH%
+
+
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11.1
         with:

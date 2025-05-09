@@ -113,7 +113,7 @@ If full ParlayANN feels heavy:
 
 ## 4 . Integration hooks in your codebase
 
-* In `node.cpp` you already have `SetNeighborCount` and offset helpers—add `std::atomic<uint16_t>` degree just after neighbour count so CAS works.
+* In `NodeAccessors.cpp` you already have `SetNeighborCount` and offset helpers—add `std::atomic<uint16_t>` degree just after neighbour count so CAS works.
 * In `config.hpp` expose `WITH (parallel_build=true, batch_size=4096)`; default `false`.
 * Background batch can reuse DuckDB `TaskScheduler`.
 
