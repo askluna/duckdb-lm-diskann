@@ -73,8 +73,6 @@ class Coordinator {
 
 	common::idx_t GetInMemorySize() const;
 
-	::duckdb::IndexStorageInfo GetIndexStorageInfo();
-
 	// --- New lifecycle/maintenance methods ---
 	void HandleCommitDrop();
 	void PerformVacuum();

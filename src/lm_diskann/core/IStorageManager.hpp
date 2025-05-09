@@ -106,14 +106,6 @@ class IStorageManager {
 	virtual common::idx_t GetInMemorySize() const = 0;
 
 	/**
-	 * @brief Retrieves DuckDB-specific storage information for checkpointing.
-	 * @details This includes allocator state and potentially the metadata root
-	 * block pointer.
-	 * @return IndexStorageInfo structure.
-	 */
-	virtual ::duckdb::IndexStorageInfo GetIndexStorageInfo() = 0;
-
-	/**
 	 * @brief Adds a node marked for deletion to the persistent delete queue.
 	 *
 	 * @param row_id The RowID of the node to enqueue for deletion.

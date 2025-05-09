@@ -60,10 +60,6 @@ class StorageManager : public virtual core::IStorageManager {
 
 	common::idx_t GetInMemorySize() const override;
 
-	// This method is problematic for full decoupling as it returns a DuckDB specific type.
-	// For now, keeping signature as per IStorageManager. Will need to be addressed.
-	::duckdb::IndexStorageInfo GetIndexStorageInfo() override;
-
 	void EnqueueDeletion(common::row_t row_id, common::IndexPointer &delete_queue_head_ptr) override;
 
 	void ProcessDeletionQueue(common::IndexPointer &delete_queue_head_ptr) override;

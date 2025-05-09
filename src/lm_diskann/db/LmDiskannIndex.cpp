@@ -157,9 +157,6 @@ LmDiskannIndex::LmDiskannIndex(const ::duckdb::string &name, ::duckdb::IndexCons
 	ValidateParameters(local_config);
 
 	// 4. Calculate node layout based on the fully populated config
-	// Store these temporarily if Coordinator's config doesn't directly hold them
-	// or if managers need them separately during construction before
-	// Coordinator.
 	core::NodeLayoutOffsets local_node_layout = CalculateLayoutInternal(local_config);
 	idx_t local_block_size_bytes =
 	    ::duckdb::AlignValue<idx_t, ::duckdb::Storage::SECTOR_SIZE>(local_node_layout.total_node_size);
@@ -170,19 +167,15 @@ LmDiskannIndex::LmDiskannIndex(const ::duckdb::string &name, ::duckdb::IndexCons
 	this->index_data_path_ = fs.JoinPath(db_lmd_root_path_str, this->name);
 	local_config.path = this->index_data_path_; // Ensure config has the path
 
-	// Create Coordinator and its dependencies
-	// These are placeholder creations. Actual managers will need proper
-	// construction. The config passed to Coordinator should be the one it owns.
-	// For now, Coordinator takes IndexConfig by const ref, so local_config is
-	// fine. If Coordinator takes IndexConfig by unique_ptr, we'd move it.
+	// Instantiate services (placeholders for now)
+	store::IFileSystemService *file_system_service_ptr = nullptr;         // FIXME: Instantiate concrete service
+	store::IShadowStorageService *shadow_storage_service_ptr = nullptr;   // FIXME: Instantiate concrete service
+	store::IPrimaryStorageService *primary_storage_service_ptr = nullptr; // FIXME: Instantiate concrete service
 
-	auto &buffer_manager = ::duckdb::BufferManager::GetBufferManager(db_state_.db);
-
-	// Instantiate concrete managers - these are placeholders for actual
-	// instantiation Their constructors would take necessary params like
-	// buffer_manager, config, paths etc.
+	// Instantiate StorageManager with services
 	std::unique_ptr<core::IStorageManager> storage_manager_ptr =
-	    std::make_unique<core::StorageManager>(buffer_manager, local_config, local_node_layout);
+	    std::make_unique<core::StorageManager>(local_config, local_node_layout, file_system_service_ptr,
+	                                           shadow_storage_service_ptr, primary_storage_service_ptr);
 
 	// ISearcher needs IStorageManager*
 	std::unique_ptr<core::ISearcher> searcher_ptr = std::make_unique<core::Searcher>(storage_manager_ptr.get());
@@ -191,17 +184,10 @@ LmDiskannIndex::LmDiskannIndex(const ::duckdb::string &name, ::duckdb::IndexCons
 	std::unique_ptr<core::IGraphManager> graph_manager_ptr = std::make_unique<core::GraphManager>(
 	    local_config, local_node_layout, local_block_size_bytes, storage_manager_ptr.get(), searcher_ptr.get());
 
-	// Shadow storage service - placeholder
-	// It would need ClientContext or similar for DuckDB interaction.
-	// auto current_context = ::duckdb::ClientContext::TryGetCurrent(db);
-	std::unique_ptr<store::IShadowStorageService> shadow_service_ptr = nullptr;
-	// std::make_unique<store::DiskannShadowStorageService>(/* potřebné parametry,
-	// např. ClientContext */);
-
-	coordinator_ = std::make_unique<core::Coordinator>(std::move(storage_manager_ptr), std::move(graph_manager_ptr),
-	                                                   std::move(searcher_ptr), std::move(shadow_service_ptr),
-	                                                   local_config // Pass the config
-	);
+	coordinator_ = std::make_unique<core::Coordinator>(
+	    std::move(storage_manager_ptr), std::move(graph_manager_ptr), std::move(searcher_ptr),
+	    nullptr, // shadow_service_ptr - FIXME: Pass the actual shadow service pointer
+	    local_config);
 
 	// Remove LmDiskannIndex's direct ownership of these if Coordinator now
 	// manages them this->config_ = local_config; // Coordinator has a copy
@@ -530,15 +516,17 @@ void LmDiskannIndex::Delete(::duckdb::IndexLock &lock, ::duckdb::DataChunk &entr
 ::duckdb::IndexStorageInfo LmDiskannIndex::GetStorageInfo(bool get_buffers) {
 	if (!coordinator_) {
 		throw ::duckdb::InternalException("Coordinator not initialized in GetStorageInfo");
-		// Or return an empty/invalid info struct?
-		// ::duckdb::IndexStorageInfo empty_info;
-		// empty_info.name = name;
-		// return empty_info;
 	}
-	// Delegate to coordinator
-	auto info = coordinator_->GetIndexStorageInfo();
-	// Ensure the index name from LmDiskannIndex is set
+	// FIXME: IStorageManager no longer provides GetIndexStorageInfo directly.
+	// This information now needs to be assembled from other sources, likely
+	// involving IShadowStorageService for DuckDB-specific metadata block pointers
+	// and allocator state. For now, returning a minimal/default info.
+	::duckdb::IndexStorageInfo info;
 	info.name = this->name;
+	// Populate other fields like root_block, estimated_size, etc. based on the new architecture.
+	// For example, the root_block for metadata might come from IShadowStorageService.
+	// info.root_block = shadow_storage_service_ptr ? shadow_storage_service_ptr->GetMetadataRootBlock() :
+	// common::INVALID_BLOCK_ID; // Conceptual
 	return info;
 }
 

@@ -388,17 +388,5 @@ common::idx_t Coordinator::GetInMemorySize() const {
 	return total_size;
 }
 
-::duckdb::IndexStorageInfo Coordinator::GetIndexStorageInfo() {
-	if (!storage_manager_) {
-		throw std::runtime_error("StorageManager not initialized in Coordinator::GetIndexStorageInfo");
-	}
-	try {
-		return storage_manager_->GetIndexStorageInfo();
-	} catch (const std::exception &e) {
-		std::cerr << "Coordinator: Error getting storage info: " << e.what() << std::endl;
-		throw; // Re-throw
-	}
-}
-
 } // namespace core
 } // namespace diskann
