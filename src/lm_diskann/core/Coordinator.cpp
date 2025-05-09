@@ -29,7 +29,7 @@ namespace core {
 Coordinator::Coordinator(std::unique_ptr<IStorageManager> storage_manager, std::unique_ptr<IGraphManager> graph_manager,
                          std::unique_ptr<ISearcher> searcher,
                          std::unique_ptr<store::IShadowStorageService> shadow_storage_service,
-                         const ::diskann::core::LmDiskannConfig &config
+                         const LmDiskannConfig &config
                          // duckdb::ClientContext& context
                          )
     : storage_manager_(std::move(storage_manager)), graph_manager_(std::move(graph_manager)),
