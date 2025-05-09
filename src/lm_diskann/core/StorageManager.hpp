@@ -7,32 +7,47 @@
 #pragma once
 
 #include "IStorageManager.hpp" // Include the interface
-#include "duckdb.hpp"
-#include "duckdb/common/common.hpp"                        // Include common for row_t
-#include "duckdb/execution/index/fixed_size_allocator.hpp" // For FixedSizeAllocator
-#include "duckdb/execution/index/index_pointer.hpp"
-#include "duckdb/storage/buffer/buffer_handle.hpp"
-#include "duckdb/storage/buffer_manager.hpp" // For BufferManager
-#include "duckdb/storage/index_storage_info.hpp"
-#include "index_config.hpp" // Include for enums AND LmDiskannMetadata struct
+// #include "duckdb.hpp" // No longer directly needed for members
+// #include "duckdb/common/common.hpp"                        // For row_t, handled by common::types
+// #include "duckdb/execution/index/fixed_size_allocator.hpp" // Allocator is removed
+// #include "duckdb/execution/index/index_pointer.hpp"        // Handled by common::types
+// #include "duckdb/storage/buffer/buffer_handle.hpp"         // Buffer manager removed
+// #include "duckdb/storage/buffer_manager.hpp" // Buffer manager removed
+// #include "duckdb/storage/index_storage_info.hpp" // This is a problematic DuckDB specific type
 
-#include <memory> // For std::unique_ptr
+#include "../common/duckdb_types.hpp"          // For common types like common::idx_t, common::row_t
+#include "../store/IFileSystemService.hpp"     // New dependency
+#include "../store/IPrimaryStorageService.hpp" // New dependency for fetching base table vectors
+#include "../store/IShadowStorageService.hpp"  // New dependency
+#include "index_config.hpp"                    // Include for LmDiskannConfig, LmDiskannMetadata, NodeLayoutOffsets
+
+#include <memory> // For std::unique_ptr (though allocator_ is removed, maybe for future caches)
+#include <string> // For std::string in method signatures
 
 namespace diskann {
 namespace core {
-// Forward declarations needed (some might be covered by includes now)
-// class FixedSizeAllocator; // Included
-class AttachedDatabase;   // Should come from duckdb.hpp or client context
-struct NodeLayoutOffsets; // Defined in index_config.hpp probably, or needs to be
+// Forward declarations
+// class AttachedDatabase; // Removed
+struct NodeLayoutOffsets; // Already in index_config.hpp
 
 class StorageManager : public virtual core::IStorageManager {
 	public:
-	StorageManager(::duckdb::BufferManager &buffer_manager, const LmDiskannConfig &config,
-	               const NodeLayoutOffsets &node_layout);
+	/**
+	 * @brief Constructor for StorageManager.
+	 * @param config The index configuration.
+	 * @param node_layout Pre-calculated node layout offsets.
+	 * @param file_system_service Service for primary graph file I/O (graph.lmd).
+	 * @param shadow_storage_service Service for shadow store and metadata I/O (diskann_store.duckdb).
+	 * @param primary_storage_service Service for fetching original vectors from the base table.
+	 */
+	StorageManager(const LmDiskannConfig &config, const NodeLayoutOffsets &node_layout,
+	               store::IFileSystemService *file_system_service, store::IShadowStorageService *shadow_storage_service,
+	               store::IPrimaryStorageService *primary_storage_service);
 
-	~StorageManager() override = default;
+	~StorageManager() override;
 
 	// --- IStorageManager Interface Implementation ---
+	// (Signatures remain the same as in IStorageManager.hpp for now)
 	void LoadIndexContents(const std::string &index_path, LmDiskannConfig &config_out, IGraphManager *graph_manager_out,
 	                       common::IndexPointer &entry_point_ptr_out, common::row_t &entry_point_rowid_out,
 	                       common::IndexPointer &delete_queue_head_out) override;
@@ -45,12 +60,16 @@ class StorageManager : public virtual core::IStorageManager {
 
 	common::idx_t GetInMemorySize() const override;
 
+	// This method is problematic for full decoupling as it returns a DuckDB specific type.
+	// For now, keeping signature as per IStorageManager. Will need to be addressed.
 	::duckdb::IndexStorageInfo GetIndexStorageInfo() override;
 
 	void EnqueueDeletion(common::row_t row_id, common::IndexPointer &delete_queue_head_ptr) override;
 
 	void ProcessDeletionQueue(common::IndexPointer &delete_queue_head_ptr) override;
 
+	// AllocateNodeBlock now needs to use IFileSystemService for graph.lmd blocks.
+	// The concept of row_id here is for context, actual block doesn't store it directly in this model.
 	bool AllocateNodeBlock(common::row_t row_id, common::IndexPointer &node_ptr_out,
 	                       common::data_ptr_t &node_data_out) override;
 
@@ -61,159 +80,84 @@ class StorageManager : public virtual core::IStorageManager {
 	void MarkBlockDirty(common::IndexPointer node_ptr) override;
 
 	private:
-	::duckdb::BufferManager &buffer_manager_;
+	// Removed DuckDB specific members
+	// ::duckdb::BufferManager &buffer_manager_;
+	// std::unique_ptr<::duckdb::FixedSizeAllocator> allocator_;
+	// ::duckdb::AttachedDatabase &db_;
+
 	LmDiskannConfig config_;
 	NodeLayoutOffsets node_layout_;
-	std::unique_ptr<::duckdb::FixedSizeAllocator> allocator_;
-	::duckdb::AttachedDatabase &db_; // Added based on free function usage, might need to get from context
+	store::IFileSystemService *file_system_service_;       // Raw pointer, lifetime managed externally
+	store::IShadowStorageService *shadow_storage_service_; // Raw pointer, lifetime managed externally
+	store::IPrimaryStorageService *primary_storage_service_;
 
-	// Helper to get AttachedDatabase, assuming it can be derived or passed
-	// ::duckdb::AttachedDatabase& GetDB();
+	// In-memory cache for frequently accessed/dirty primary graph blocks (graph.lmd)
+	// This would be a new component if StorageManager handles caching. For now, assume direct passthrough.
+	// Example: std::unique_ptr<NodeBlockCache> primary_block_cache_;
+
+	// --- Private Helper Methods (Derived from old global functions) ---
+	// These methods are intended to encapsulate logic that will use the service members.
+	// Their signatures are changed to remove direct DuckDB dependencies.
+
+	/**
+	 * @brief Tries to find the IndexPointer for a given row_id using the shadow store.
+	 * @param row_id The row_id to look up.
+	 * @param node_ptr Output parameter for the found IndexPointer.
+	 * @return True if found, false otherwise.
+	 * V2 NOTE: This responsibility moves to IShadowStorageService.
+	 */
+	bool TryGetNodePointerFromShadow(common::row_t row_id, common::IndexPointer &node_ptr);
+
+	/**
+	 * @brief Allocates a new node in the shadow store (e.g., updates ART map).
+	 * @param row_id The row_id for which to allocate and map an IndexPointer.
+	 * @return The allocated IndexPointer.
+	 * V2 NOTE: RowID map update by IShadowStorageService. Block allocation in graph.lmd is separate.
+	 */
+	common::IndexPointer AllocateAndMapNodeInShadowStore(common::row_t row_id);
+
+	/**
+	 * @brief Deletes a node from the shadow store map and handles associated block freeing logic via services.
+	 * @param row_id The row_id to delete.
+	 * V2 NOTE: RowID map removal by IShadowStorageService. Block freeing in graph.lmd is separate.
+	 */
+	void DeleteNodeFromShadowStoreAndFreeBlock(common::row_t row_id);
+
+	// GetNodeBuffer is largely superseded by GetNodeBlockData / GetMutableNodeBlockData using IFileSystemService.
+	// For now, we won't add a direct replacement but expect its logic to be in those interface methods.
+
+	/**
+	 * @brief Persists LM-DiskANN metadata using the shadow storage service.
+	 * @param metadata The metadata to persist.
+	 * V2 NOTE: Metadata is managed by IShadowStorageService in diskann_store.duckdb.
+	 */
+	void PersistLmDiskannMetadata(const LmDiskannMetadata &metadata);
+
+	/**
+	 * @brief Loads LM-DiskANN metadata using the shadow storage service.
+	 * @param metadata_out Output parameter for the loaded metadata.
+	 * V2 NOTE: Metadata is loaded by IShadowStorageService from diskann_store.duckdb.
+	 */
+	void LoadLmDiskannMetadata(LmDiskannMetadata &metadata_out);
+
+	/**
+	 * @brief Gets a valid entry point row_id.
+	 *        Uses persisted pointer or falls back to a random node from the shadow store.
+	 * @param graph_entry_point_ptr Persisted entry point pointer (can be invalid).
+	 * @return A valid row_id for an entry point.
+	 */
+	common::row_t GetConsistentEntryPointRowId(common::IndexPointer graph_entry_point_ptr);
+
+	/**
+	 * @brief Gets a random node ID from the shadow store mapping table.
+	 * @return A random row_id.
+	 * V2 NOTE: This would query IShadowStorageService for a random RowID.
+	 */
+	common::row_t GetRandomNodeIDFromShadowStore();
 };
 
-// --- Storage Management Interface (Placeholders/Signatures) --- //
-// These functions currently assume an external map/ART is used.
-// They might be moved into LmDiskannIndex or a dedicated storage class later.
-
-/**
- * @brief Tries to find the node pointer for a given RowID.
- * @details Placeholder - needs implementation using ART.
- * @param row_id The RowID to lookup.
- * @param[out] node_ptr Output parameter for the found IndexPointer.
- * @param db Attached database reference (needed for BufferManager access).
- * @param rowid_map Pointer to the ART instance (or similar map).
- * @return True if found, false otherwise.
- */
-// bool TryGetNodePointer(row_t row_id, IndexPointer &node_ptr, AttachedDatabase
-// &db /* , ART* rowid_map */);
-
-/**
- * @brief Allocates a new node block and updates the RowID map.
- * @details Placeholder - needs implementation using ART.
- * @param row_id The RowID for the new node.
- * @param db Attached database reference.
- * @param allocator The FixedSizeAllocator for node blocks.
- * @param rowid_map Pointer to the ART instance (or similar map).
- * @return IndexPointer to the newly allocated block.
- * @throws ConstraintException if the row_id already exists.
- * @throws InternalException if allocation fails.
- */
-// IndexPointer AllocateNode(row_t row_id, AttachedDatabase &db,
-// FixedSizeAllocator &allocator /* , ART* rowid_map */);
-
-/**
- * @brief Deletes a node from the RowID map and frees its associated block.
- * @details Placeholder - needs implementation using ART.
- * @param row_id The RowID to delete.
- * @param db Attached database reference.
- * @param allocator The FixedSizeAllocator for node blocks.
- * @param rowid_map Pointer to the ART instance (or similar map).
- */
-// void DeleteNodeFromMapAndFreeBlock(row_t row_id, AttachedDatabase &db,
-// FixedSizeAllocator &allocator /* , ART* rowid_map */);
-
-/**
- * @brief Pins a block buffer using its IndexPointer.
- * @param node_ptr The IndexPointer to the block.
- * @param db Attached database reference.
- * @param allocator The FixedSizeAllocator used by the index.
- * @param write_lock Whether to acquire a write lock (defaults to false).
- * @return BufferHandle for the pinned block.
- * @throws IOException if the pointer is invalid or pinning fails.
- */
-// ::duckdb::BufferHandle GetNodeBuffer(::duckdb::IndexPointer node_ptr,
-//                                      ::duckdb::AttachedDatabase &db,
-//                                      FixedSizeAllocator &allocator,
-//                                      bool write_lock = false);
-
-// --- Metadata Persistence --- //
-
-/**
- * @brief Persists the index metadata to a specified block.
- * @param metadata_ptr The IndexPointer to the metadata block.
- * @param db The attached database reference.
- * @param allocator The FixedSizeAllocator used by the index.
- * @param metadata The metadata struct to persist.
- */
-// void PersistMetadata(::duckdb::IndexPointer metadata_ptr,
-//                      ::duckdb::AttachedDatabase &db,
-//                      FixedSizeAllocator &allocator,
-//                      const LmDiskannMetadata &metadata);
-
-/**
- * @brief Loads the index metadata from a specified block.
- * @param metadata_ptr The IndexPointer to the metadata block.
- * @param db The attached database reference.
- * @param allocator The FixedSizeAllocator used by the index.
- * @param[out] metadata The metadata struct to load into.
- */
-// void LoadMetadata(::duckdb::IndexPointer metadata_ptr,
-//                   ::duckdb::AttachedDatabase &db, FixedSizeAllocator &allocator,
-//                   LmDiskannMetadata &metadata);
-
-// --- Delete Queue Management --- //
-
-/**
- * @brief Enqueues a RowID for deletion (placeholder implementation).
- * @details This likely involves allocating a small block for the queue entry
- *          and linking it to the current queue head.
- * @param deleted_row_id The RowID of the node being deleted.
- * @param[in,out] delete_queue_head_ptr Reference to the head pointer of the
- * delete queue (will be updated).
- * @param db The attached database reference.
- * @param allocator The FixedSizeAllocator (or potentially a dedicated one for
- * the queue).
- */
-// void EnqueueDeletion(::duckdb::row_t deleted_row_id,
-//                      ::duckdb::IndexPointer &delete_queue_head_ptr,
-//                      ::duckdb::AttachedDatabase &db,
-//                      FixedSizeAllocator &allocator);
-
-/**
- * @brief Processes the deletion queue (placeholder implementation).
- * @details Called during VACUUM. Iterates the queue, finds referring nodes,
- *          updates their neighbor lists, and frees queue blocks.
- * @param delete_queue_head_ptr Reference to the head pointer of the delete
- * queue.
- * @param db The attached database reference.
- * @param allocator The FixedSizeAllocator.
- * @param index The index instance (needed for finding referring nodes,
- * potentially via ART).
- */
-// Forward declare LmDiskannIndex if needed
-// class LmDiskannIndex;
-// void ProcessDeletionQueue(IndexPointer &delete_queue_head_ptr,
-// AttachedDatabase &db, FixedSizeAllocator &allocator, LmDiskannIndex &index);
-
-// --- Entry Point / Node ID Retrieval --- //
-// These also depend on the RowID mapping implementation (ART)
-
-/**
- * @brief Retrieves the RowID stored within a specific node block (if stored
- * there).
- * @details Placeholder - Requires node layout definition and ART integration
- * for reliable inverse lookup.
- * @param node_ptr Pointer to the node block.
- * @param db The attached database reference.
- * @param allocator The FixedSizeAllocator used by the index.
- * @return The RowID found in the node block (or potentially MAX_ROW_ID).
- * @throws IOException if the block cannot be read.
- */
-// ::duckdb::row_t GetEntryPointRowId(::duckdb::IndexPointer node_ptr,
-//                                    ::duckdb::AttachedDatabase &db,
-//                                    FixedSizeAllocator &allocator);
-
-/**
- * @brief Gets a random node ID from the index.
- * @details Placeholder - needs ART implementation for efficient random
- * sampling.
- * @param db The attached database reference.
- * @param allocator The FixedSizeAllocator used by the index.
- * @param rowid_map Pointer to the ART instance.
- * @return A random RowID from the index, or MAX_ROW_ID if empty.
- */
-// row_t GetRandomNodeID(AttachedDatabase &db, FixedSizeAllocator &allocator /*,
-// ART* rowid_map */);
+// Placeholder global functions from StorageManager.cpp are removed from here as they were not class members.
+// Their logic, if still needed, will be part of the class methods or new services.
 
 } // namespace core
 } // namespace diskann
