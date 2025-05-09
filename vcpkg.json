@@ -7,6 +7,7 @@
   "dependencies": [
     "highway",
     "simsimd",
-    "vcpkg-cmake"
+    "vcpkg-cmake",
+    "cista"
   ]
 }
