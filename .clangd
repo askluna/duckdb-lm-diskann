@@ -1,5 +1,9 @@
 CompileFlags:
-  Add: [-std=c++20, -ferror-limit=0]
+  Add: [-std=c++20, -ferror-limit=0, 
+        -Wall, -Wextra, -Wpedantic, 
+        -Wshadow, -Wconversion, -Wsign-conversion, 
+        -Wold-style-cast, -Wdouble-promotion, 
+        -Wimplicit-int-float-conversion]
 
 Diagnostics:
   ClangTidy:
@@ -17,7 +21,8 @@ Diagnostics:
     # Remove any specific checks you find problematic or too noisy,
     # but be cautious when removing checks if the goal is maximal safety.
     # Remove:
-    #   - 'some-check-you-dont-want'
+    #   - 'cppcoreguidelines-avoid-unused-parameters'
+    #   - 'readability-named-parameter'
 
     # Ensure all selected checks are run, even if they are slower.
     FastCheckFilter: None # Options: Strict (default), Loose, None [1][4]
