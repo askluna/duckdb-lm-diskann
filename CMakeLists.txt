@@ -52,8 +52,13 @@ target_include_directories(${EXTENSION_NAME} SYSTEM
         # "${CMAKE_CURRENT_LIST_DIR}/duckdb/third_party/fmt/include"
 )
 
-# Conditionally apply strict compiler flags to the static extension target
-if(DEFINED ENV{LOCAL_SAFETY_CHECKS} AND "$ENV{LOCAL_SAFETY_CHECKS}" STREQUAL "1")
+
+set(_LOCAL_SAFETY_CHECKS_VALUE "0")
+if(DEFINED ENV{LOCAL_SAFETY_CHECKS})
+    set(_LOCAL_SAFETY_CHECKS_VALUE "$ENV{LOCAL_SAFETY_CHECKS}")
+endif()
+
+if(_LOCAL_SAFETY_CHECKS_VALUE STREQUAL "1")
     message(STATUS "LOCAL_SAFETY_CHECKS is ON (set to '1'). Applying strict compiler flags and sanitizers to ${EXTENSION_NAME}.")
     target_compile_options(${EXTENSION_NAME} PRIVATE
         -g3                     # Enhanced debug information
@@ -76,13 +81,11 @@ if(DEFINED ENV{LOCAL_SAFETY_CHECKS} AND "$ENV{LOCAL_SAFETY_CHECKS}" STREQUAL "1"
         -Wno-unused-parameter   # Explicitly disable unused parameter warnings
         -Wno-unused-variable    # Explicitly disable unused variable warnings
         -Wimplicit-int-float-conversion # Warn on potentially lossy int to float conversions
-
-        # -- Add Sanitizers Here --
-        -fsanitize=address,undefined # Add ,leak if appropriate for your platform/needs
-        -fno-sanitize-recover=all    # Crash immediately on sanitizer errors
-
         # Add any other specific warnings you find useful here
     )
+
+    # Enable sanitizers for local builds
+    add_link_options(-fsanitize=address -fsanitize=undefined)
 endif()
 
 target_include_directories(${EXTENSION_NAME}
