@@ -180,7 +180,6 @@ void Coordinator::Delete(common::row_t label) {
 		return;
 	}
 
-	bool success = true;
 	try {
 		// 1. Log to shadow store (if available)
 		if (shadow_storage_service_) {
@@ -217,13 +216,14 @@ void Coordinator::Delete(common::row_t label) {
 	} catch (const std::exception &e) {
 		// TODO: Proper error handling/logging. Maybe rollback shadow log?
 		std::cerr << "Coordinator: Error during Delete for label " << label << ": " << e.what() << std::endl;
-		success = false;
 		// Re-throw or handle error appropriately
 		throw; // Re-throwing for now
 	}
 }
 
 void Coordinator::Update(common::row_t label, const float *new_data_vector, size_t data_dim) {
+	(void)new_data_vector; // Marked as unused
+	(void)data_dim;        // Marked as unused
 	std::cout << "Coordinator: Update called for label: " << label << std::endl;
 	if (!index_loaded_) {
 		std::cerr << "Coordinator: Error - Index not loaded for update." << std::endl;

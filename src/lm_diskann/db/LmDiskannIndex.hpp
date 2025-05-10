@@ -120,9 +120,10 @@ class LmDiskannIndex : public ::duckdb::BoundIndex {
 	::duckdb::ErrorData Insert(::duckdb::IndexLock &lock, ::duckdb::DataChunk &data, ::duckdb::Vector &row_ids) override;
 	/** @brief Retrieves storage information (metadata pointer, allocator stats).
 	 */
-	::duckdb::IndexStorageInfo GetStorageInfo(const bool get_buffers);
+	::duckdb::IndexStorageInfo GetStorageInfo(const ::duckdb::case_insensitive_map_t<::duckdb::Value> &options,
+	                                          const bool to_wal) override;
 	/** @brief Gets the estimated in-memory size of the index structures. */
-	idx_t GetInMemorySize();
+	idx_t GetInMemorySize(::duckdb::IndexLock &state) override;
 	/** @brief Merges another index into this one (not implemented). */
 	bool MergeIndexes(::duckdb::IndexLock &state, ::duckdb::BoundIndex &other_index) override;
 	/** @brief Performs vacuuming operations (e.g., processing delete queue). */
