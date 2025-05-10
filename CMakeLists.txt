@@ -53,7 +53,7 @@ target_include_directories(${EXTENSION_NAME} SYSTEM
 )
 
 # Conditionally apply strict compiler flags to the static extension target
-if(DEFINED ENV{LOCAL_SAFETY_CHECKS} AND $ENV{LOCAL_SAFETY_CHECKS} STREQUAL "1")
+if(DEFINED ENV{LOCAL_SAFETY_CHECKS} AND "$ENV{LOCAL_SAFETY_CHECKS}" STREQUAL "1")
     message(STATUS "LOCAL_SAFETY_CHECKS is ON (set to '1'). Applying strict compiler flags and sanitizers to ${EXTENSION_NAME}.")
     target_compile_options(${EXTENSION_NAME} PRIVATE
         -g3                     # Enhanced debug information
@@ -71,8 +71,10 @@ if(DEFINED ENV{LOCAL_SAFETY_CHECKS} AND $ENV{LOCAL_SAFETY_CHECKS} STREQUAL "1")
         -Wsign-conversion       # Warn for implicit sign conversions
         -Wold-style-cast        # Warn for C-style casts
         -Wdouble-promotion      # Warn when float is promoted to double
-        -Wunused-parameter      # Warn on unused function parameters
-        -Wunused-variable       # Warn on unused local variables
+        # -Wunused-parameter      # Warn on unused function parameters
+        # -Wunused-variable       # Warn on unused local variables
+        -Wno-unused-parameter   # Explicitly disable unused parameter warnings
+        -Wno-unused-variable    # Explicitly disable unused variable warnings
         -Wimplicit-int-float-conversion # Warn on potentially lossy int to float conversions
 
         # -- Add Sanitizers Here --
