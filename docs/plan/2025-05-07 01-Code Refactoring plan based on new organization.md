@@ -1,4 +1,3 @@
-```
 # DiskANN DuckDB Extension: V1 Refactoring Plan (HPP/CPP)
 
 ## 1. Introduction
@@ -335,6 +334,6 @@ src/
 6.  **Testing**: Thorough unit and integration testing will be crucial at each step.
 
 This plan provides a roadmap for the V1 refactoring. The key is a disciplined approach to separating concerns and managing dependencies through interfaces.
-```
+
 
 This plan should guide the initial refactoring. Remember that this is an iterative process, and some details might be refined as you delve into the implementation. The focus on using interfaces from the start, even with traditional hpp/cpp files, will make a future transition to C++20 modules much smoother.
