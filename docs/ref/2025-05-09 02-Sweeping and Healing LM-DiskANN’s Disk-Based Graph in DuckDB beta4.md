@@ -4,7 +4,7 @@ I’ll analyze node-local backlink layouts vs external representations, tradeoff
 
 I’ll let you know when the full design is ready.
 
-# Design Study: Sweeping and Healing LM-DiskANN’s Disk-Based Graph in DuckDB
+# Design Study: Sweeping and Healing LM-DiskANN’s Disk-Based Graph in DuckDB beta4
 
 ## Introduction and Goals
 

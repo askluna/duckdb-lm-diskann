@@ -1,4 +1,4 @@
-## Brainstorming Mitigations for 'Pure' LM-DiskANN with Decoupled Filtering
+## Brainstorming Mitigations for 'Pure' LM-DiskANN with Decoupled Filtering (beta3)
 
 ### 1. Introduction
 

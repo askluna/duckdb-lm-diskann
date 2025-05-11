@@ -2,7 +2,7 @@ Understood. I’ll consolidate all the design documents, LM-DiskANN paper, and y
 
 I'll let you know as soon as the full document is ready for your review.
 
-# LM-DiskANN Extension: Architecture and Design Evolution
+# LM-DiskANN Extension: Architecture and Design Evolution beta4
 
 ## Background and Evolution from LM-DiskANN Paper to DuckDB Extension
 

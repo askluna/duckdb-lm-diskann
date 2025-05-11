@@ -1,6 +1,6 @@
 
 
-# LM-DiskANN with Shadow Lookup Table – Technical Design & Implementation Specification
+# LM-DiskANN with Shadow Lookup Table – Technical Design & Implementation Specification beta1
 
 ## Architecture Overview and Goals
 

@@ -1,4 +1,4 @@
-# LM-DiskANN DuckDB Extension - Phased Implementation Plan (MVP Structure)
+# LM-DiskANN DuckDB Extension beta2 - Phased Implementation Plan (MVP Structure) beta3
 
 ## I. Project Objective and Adopted Architectural Framework
 
