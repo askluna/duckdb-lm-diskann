@@ -1,4 +1,4 @@
-# LM-DiskANN Extension: Architecture and Design Evolution
+# DuckdbLM-DiskANN Extension v1: Architecture and Design MVP
 
 ## Background and Evolution from LM-DiskANN Paper to DuckDB Extension
 
