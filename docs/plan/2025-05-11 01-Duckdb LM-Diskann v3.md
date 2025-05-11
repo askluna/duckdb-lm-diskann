@@ -101,24 +101,109 @@ This directory contains the following components:
 
 ## Node Block Layout and Graph Structure
 
-Each vector in the index corresponds to a **NodeBlock** in the `graph.lmd` file. All NodeBlocks are equal-sized (e.g. 8192 bytes) and aligned, so the `node_id` serves as an index for direct file offset (`offset = node_id * BLOCK_SIZE`). This fixed size simplifies random access and in-place updates.
+### Node Block Layout
 
-**Contents of a NodeBlock:** Each block is essentially a self-contained representation of a graph node and its neighbors. The layout is:
+Each vector indexed by LM-DiskANN corresponds to a `NodeBlock` in the `graph.lmd` file. All `NodeBlock`s are of a fixed size (e.g., 8192 bytes), determined at index creation. This fixed size is crucial for direct offset-based access (`offset = node_id * BLOCK_SIZE`), efficient memory mapping, and zero-copy serialization (e.g., using Cista).
 
-- **Node Header:** Includes administrative fields:
-    - `node_id` (uint64) – Unique identifier for the node (also determines its block position). Assigned once and never reused.
-    - `origin_txn_id` (int64) – The DuckDB transaction ID that created or last modified this node block.
-    - `commit_epoch/versioning info` (int64) – A monotonically increasing commit timestamp or epoch given when the creating transaction committed. Used for MVCC visibility checks.  Or some versioning info?
-    - `tombstone` (boolean) – A flag indicating the node is logically deleted. Set to true when a deletion is committed; causes searches to ignore this node.
-    - `checksum` (uint64) – Checksum (e.g. xxHash64) of the block’s content for corruption detection.
-- **Vector Data:** The full uncompressed feature vector for this node (e.g., an array of `float` values of length = dimension). This is used for accurate distance calculations when needed (e.g., final re-ranking).
-- **Neighbor List:** An array of neighbor **node_ids** (e.g., up to `R` neighbors, where `R` is the max degree). These are the outgoing edges in the graph from this node. Neighbors are typically chosen based on nearest-neighbor criteria (the graph is often built using something like the Vamana or NSW algorithm).
-- **Compressed Neighbor Vectors:** For each neighbor in the list, a compressed representation of that neighbor’s vector is stored.  Tertiary quantization is used to shrink vectors while preserving distance approximations. Storing these in the NodeBlock allows distance computations to neighbors without loading each neighbor’s full NodeBlock from disk – only the current block is needed.
-- Backlink List: …. 2xr
-- **Padding/Free Space:** Bytes padding the structure to the fixed block size. This can accommodate slight growth in neighbor list size without relocating the block. Large changes or overflows are handled by writing a new version of the block to the shadow store (copy-on-write).
+**Contents of a `NodeBlock`:**
 
-*Figure: Conceptual NodeBlock Layout — ID & metadata, full vector, neighbor IDs, neighbor compressed vectors, then padding.* Each block has all info to evaluate that node and traverse to neighbors, enabling a **single disk I/O per node** during search. This trades extra storage for far fewer random reads: the search algorithm can fetch a node’s block and immediately have approximate distances to all its neighbors, rather than retrieving each neighbor separately.
+Each block is a self-contained unit representing a graph node, its vector, its connections (forward links with compressed vectors for searching), and its referrers (backlinks).
 
-**Graph Structure:** The nodes form a **navigable small-world graph** (like DiskANN’s graph or an HNSW graph). Each node links to ~`R` nearest neighbors, forming a highly connected graph that a greedy search can traverse to find close vectors. One node is designated as an entry point (often the one with maximum vector norm, as in DiskANN). The graph can be viewed as dynamic: insertions add a new node that connects to some existing nodes (and may cause some local neighbor list adjustments), while deletions remove a node (and ideally its references in others’ neighbor lists). The graph is kept *approximately* well-connected through local heuristics (e.g., neighbors are selected by a *prune* algorithm to maintain good recall). Periodic maintenance or smarter insertion heuristics can mitigate any degradation in graph quality over many updates.
+1. **Header (e.g., ~48-56 bytes, `alignas(64)` for the whole block):**
+   - `node_id` (uint64): Unique identifier for the node. Also typically determines its primary block position in `graph.lmd` when not using a free list slot. Assigned once and ideally never reused to simplify consistency.
+   - `row_id` (int64): The DuckDB `row_id` of the base table tuple this vector corresponds to. Essential for mapping search results back to user data and for potential index rebuilds or verification.
+   - `commit_epoch` (int64): A monotonically increasing timestamp or sequence number assigned when the transaction that created/last modified this block version committed. This is fundamental for MVCC visibility.
+   - `flags` (uint8): A bitfield for various states:
+     - Bit 0: `IS_TOMBSTONED` (1 if logically deleted, 0 otherwise).
+     - Bit 1: `HAS_OVERFLOW_BACKLINKS` (1 if backlinks for this node exist in `lmd_backlink_overflow`, 0 otherwise). This acts as the discriminator for the backlink union.
+     - (Other bits reserved for future use, e.g., compaction status, pin status).
+   - `num_forward_links` (uint16): Current count of active forward links stored in this block.
+   - `num_inline_backlinks` (uint16): Current count of active backlinks stored directly within this block (relevant only if `HAS_OVERFLOW_BACKLINKS` is 0).
+   - `checksum` (uint32/uint64): Checksum (e.g., xxHash32/64) of the block's content (excluding the checksum field itself) for detecting corruption.
+2. **Vector Data:**
+   - `vector` (float[DIMENSION], `alignas(32)`): The full-precision, uncompressed feature vector for this node. `DIMENSION` is fixed at index creation.
+3. **Forward Links (Neighbors for Search):**
+   - Capacity: `R_f` (e.g., 70, fixed at index creation).
+   - `forward_link_node_ids` (uint32[R_f], `alignas(32)`): Array of `node_id`s of the neighbors this node points to. Unused slots are marked (e.g., `INVALID_NODE_ID` or 0 if 0 is not a valid `node_id`).
+   - `forward_link_compressed_vectors` (uint8[R_f][CompressedVectorSize], `alignas(32)`): Array of compressed vector representations (e.g., using ternary quantization, PQ codes) for each corresponding forward neighbor. `CompressedVectorSize` depends on `DIMENSION` and the quantization scheme.
+4. **Backlink Storage Area (Union for Inline vs. Overflow Pointer):**
+   - This area is fixed in size, determined by the space needed for the inline backlink array.
+   - The `flags.HAS_OVERFLOW_BACKLINKS` bit determines how this area is interpreted.
+   - **If `flags.HAS_OVERFLOW_BACKLINKS == 0`:**
+     - `inline_backlink_node_ids` (uint32[R_b], `alignas(32)`): Array storing `node_id`s of nodes that have this node in their forward links.
+       - Capacity: `R_b`. Per your request, we'll set `R_b = 2 * R_f`.
+       - Unused slots are marked. `num_inline_backlinks` tracks the count.
+   - **If `flags.HAS_OVERFLOW_BACKLINKS == 1`:**
+     - `overflow_reference` (uint32 or uint64): This field occupies the first few bytes of the backlink storage area. It stores a reference (e.g., the `node_id` itself to be used as a key in `lmd_backlink_overflow`, or a direct row ID if feasible) to the `lmd_backlink_overflow` table where all backlinks for this node are now stored. The remaining bytes of the `inline_backlink_node_ids` array area are unused in this mode. The `num_inline_backlinks` header field would be 0 or a special value.
+5. **Padding:**
+   - Any remaining bytes to ensure the `NodeBlock` fills its allocated fixed size (e.g., 8192 bytes).
 
-**Identifier Management:** Node IDs are 64-bit and monotonically increasing as new nodes are added (the index can scale to billions of vectors). 
+**Graph Structure and Identifier Management:** The overall graph structure (navigable small-world) and `node_id` management (64-bit, monotonic, no reuse) remain as previously described. The key change is the explicit, symmetric storage of backlinks within the node block itself, up to `R_b` capacity, with a defined overflow strategy.
+
+#### MVCC Field in Node Header: `commit_epoch`
+
+The `commit_epoch` field is critical for integrating the LM-DiskANN index with DuckDB's transactional semantics, ensuring data consistency, especially under concurrent operations and in recovery scenarios. It is the primary mechanism for Multi-Version Concurrency Control (MVCC) within the index.
+
+**`commit_epoch` (int64):**
+
+- **Purpose:** This field stores a monotonically increasing value, typically the "commit timestamp" or a unique, ordered transaction commit ID that DuckDB assigns to every transaction upon successful completion. When a new `NodeBlock` version is created (due to insertion or update) and its creating transaction commits, this `commit_epoch` is stamped onto the `NodeBlock`. Blocks from uncommitted transactions (e.g., those still in `lmd_delta_blocks` before their transaction fully commits or those in an in-memory dirty buffer) would effectively have a "pending" or no valid `commit_epoch` until their transaction commits.
+- **Utility (Fundamental for MVCC):**
+  1. **Snapshot Isolation / Visibility:** This is the cornerstone of MVCC. Each active reader transaction in DuckDB operates with a "snapshot epoch" (typically the `commit_epoch` of the latest committed transaction when the reader transaction started, or a similar logical timestamp derived from DuckDB's transaction manager, like `transaction.start_time`). A reader transaction can only "see" `NodeBlock` versions where `NodeBlock.commit_epoch <= reader_transaction.snapshot_epoch`. This check is performed locally when a `NodeBlock` is accessed, allowing instant visibility decisions without consulting external tables.
+  2. **Preventing Dirty Reads:** Ensures transactions do not read data from other uncommitted transactions, as uncommitted blocks will not yet have a `commit_epoch` (or will have one that is not yet globally visible/valid).
+  3. **Preventing Non-Repeatable Reads:** Ensures that if a transaction reads a node, and another transaction later updates and commits that node (creating a new version with a later `commit_epoch`), the first transaction (if it re-reads) will still see the old version appropriate for its snapshot epoch.
+  4. **Safe Tombstone Processing & Space Reclamation:** The sweeper process uses `commit_epoch`s to determine when it's safe to physically reclaim a block or process a tombstone. Specifically, a tombstoned node (marked in `lmd_tombstoned_nodes` with its deletion's `commit_epoch`) cannot be fully reclaimed if any active reader transaction in the system has a snapshot epoch older than the tombstone's `commit_epoch`. The sweeper checks against the global minimum active snapshot epoch (e.g., `TransactionManager::Get(db).LowestActiveStartTime()` in DuckDB) to ensure no reader can still see the node as "live."
+  5. **Rollback Handling:** While `origin_txn_id` was previously considered for explicit rollback tracking, relying on `commit_epoch` simplifies this. If a transaction writing new `NodeBlock` versions aborts, those blocks will never receive a valid, globally visible `commit_epoch`. Thus, they will naturally be invisible to all other transactions and can be garbage collected by the system (e.g., not merged from `lmd_delta_blocks` if their creating transaction didn't commit).
+- **Source of `commit_epoch`:** DuckDB's transaction manager provides this value. For instance, upon a transaction's commit, `transaction.commit_id` (or an equivalent epoch like `transaction.start_time` if used consistently for snapshotting) is obtained and persisted with the `NodeBlock` data in `lmd_delta_blocks`.
+
+By embedding the `commit_epoch` directly into each `NodeBlock`, the system allows every component (reader, writer, sweeper) to make visibility and safety decisions locally and efficiently, often with zero extra I/O or complex locking, fully leveraging DuckDB's existing MVCC machinery.
+
+
+
+### Overflow Management [Not MVP]
+
+To maintain a strictly fixed `NodeBlock` size while accommodating nodes with a high number of incoming links (backlinks), an overflow mechanism is employed.  *This is only if needed.*
+
+- **Triggering Overflow:** When a new backlink needs to be added to a node `N`, and its `inline_backlink_node_ids` array (of size `R_b`) is already full:
+
+  1. The `flags.HAS_OVERFLOW_BACKLINKS` bit for node `N` is set to 1.
+  2. All existing `R_b` backlinks from `N.inline_backlink_node_ids` are moved (inserted) into the `lmd_backlink_overflow` table in `diskann_store.duckdb`, associated with `N.node_id`.
+  3. The new incoming backlink is also inserted directly into `lmd_backlink_overflow` for `N.node_id`.
+  4. The `N.overflow_reference` field in `N.NodeBlock` is set to point to these overflowed entries (e.g., by storing `N.node_id`, which then serves as the query key for the overflow table).
+  5. `N.num_inline_backlinks` is set to 0.
+  6. Node `N`'s block is marked dirty and written to `lmd_delta_blocks`. `N.node_id` is added to `lmd_sweep_list` for merging.
+
+- **Accessing Backlinks:** When the system needs the complete list of backlinks for a node `N`:
+
+  1. Read `N.NodeBlock`.
+  2. Check `N.flags.HAS_OVERFLOW_BACKLINKS`.
+  3. If 0, all backlinks are in `N.inline_backlink_node_ids` (up to `N.num_inline_backlinks`).
+  4. If 1, all backlinks must be retrieved by querying the `lmd_backlink_overflow` table using `N.overflow_reference` (e.g., `SELECT referrer_node_id FROM lmd_backlink_overflow WHERE target_node_id = N.node_id`).
+
+- **Repatriation (Moving Backlinks from Overflow to Inline):**
+
+  - The sweeper process can periodically attempt to move backlinks from `lmd_backlink_overflow` back into a node's inline storage.
+  - **Trigger:** This can happen if, due to other nodes being deleted (which were referrers), the *actual* number of backlinks for node `N` (as tracked in `lmd_backlink_overflow`) drops below `R_b`.
+  - **Process:**
+    1. If `N.flags.HAS_OVERFLOW_BACKLINKS == 1` and the count of its backlinks in `lmd_backlink_overflow` is now `< R_b`:
+    2. Read all backlinks for `N` from `lmd_backlink_overflow`.
+    3. Write these backlinks into `N.inline_backlink_node_ids`.
+    4. Update `N.num_inline_backlinks`.
+    5. Set `N.flags.HAS_OVERFLOW_BACKLINKS = 0`.
+    6. Clear the `N.overflow_reference` field (or set to a null/invalid value).
+    7. Delete the corresponding entries from `lmd_backlink_overflow`.
+    8. Mark `N.NodeBlock` dirty and schedule for merge.
+  - This helps keep the `lmd_backlink_overflow` table smaller and restores faster inline access for nodes whose popularity wanes.
+
+- **Cista and Union:** The backlink storage area can be implemented in C++ using a `union` as suggested in `user_critique_analysis_v1`.
+
+  ```
+  // Within the NodeBlock struct
+  union BacklinkArea {
+      alignas(32) uint32_t inline_backlink_node_ids[R_B_PARAM]; // R_B_PARAM = 2 * R_F_PARAM
+      uint32_t overflow_reference; // Uses the first 4 bytes if HAS_OVERFLOW_BACKLINKS is set
+      // Potentially other members if different overflow strategies are needed later
+  } backlinks;
+  ```
+
+  The `flags.HAS_OVERFLOW_BACKLINKS` bit acts as the external discriminator for this union. This structure ensures the `NodeBlock` remains fixed-size and Cista can serialize/deserialize it directly via `reinterpret_cast` or memory mapping.
+
