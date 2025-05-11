@@ -6,7 +6,7 @@
 
 In LM-DiskANN, each graph node’s disk *block* contains *complete routing information* – the node’s vector and a list of neighbors (with compressed neighbor vectors) – enabling searches with only on-demand disk reads and negligible memory overhead. The original paper demonstrated that this design achieves recall-latency performance comparable to in-memory indexes while drastically reducing memory footprint.
 
-**From Paper to DuckDB Integration:**  The extension must handle **transactional updates, concurrency, and recovery** in a DBMS context – areas beyond the paper’s scope. Initial integration attempts (using DuckDB’s in-memory allocators) revealed issues like **memory-pinning and poor eviction**, prompting a redesign to a *“shadow table” architecture* that fully embraces disk storage and DuckDB’s WAL/transaction mechanisms. Over successive design iterations (v1 and v2), the architecture evolved to ensure **ACID properties**, minimal write amplification, and synergy with DuckDB’s optimizer for filtered queries. The final design, described below, marries the LM-DiskANN graph structure with DuckDB’s MVCC model and storage framework, resulting in a robust, modular extension that supports billion-scale vector data with dynamic inserts/deletes.
+**From Paper to DuckDB Integration:**  The extension must handle **transactional updates, concurrency, and recovery** in a DBMS context – areas beyond the paper’s scope. Initial integration attempts (using DuckDB’s in-memory allocators) revealed issues like **memory-pinning and poor eviction**, prompting a redesign to a *“shadow table” architecture* that fully embraces disk storage and DuckDB’s WAL/transaction mechanisms. Over successive design iterations (beta1 and beta2), the architecture evolved to ensure **ACID properties**, minimal write amplification, and synergy with DuckDB’s optimizer for filtered queries. The final design, described below, marries the LM-DiskANN graph structure with DuckDB’s MVCC model and storage framework, resulting in a robust, modular extension that supports billion-scale vector data with dynamic inserts/deletes.
 
 ## Architectural Overview
 
@@ -35,11 +35,11 @@ The LM-DiskANN variant of the algorithm we implemented is designed for low memor
 ####  Main roadblocks
 
 1. **"Index lacks access to WAL events"** This fundamental deficiency signifies that alterations to the index's state, particularly concerning auxiliary data structures such as lookup tables or metadata, are not safeguarded by a Write-Ahead Log that is synchronized with database transactions. The consequences include a loss of atomicity and durability for index operations, creating risks of data loss during system failures, inconsistent behavior during rollbacks, and non-atomic commits between the database and the index.
-2. **"BufferManager fails to deallocate memory for index or ART data"** A "V1" design's misuse of the database's buffer manager can prevent the deallocation of memory occupied by index structures (such as node data or ART-based lookup structures). This leads to persistent memory pinning, culminating in memory bloat and potential system resource starvation. An example cited was the `FixedSizeAllocator` pinning all index blocks.
+2. **"BufferManager fails to deallocate memory for index or ART data"** A "beta1" design's misuse of the database's buffer manager can prevent the deallocation of memory occupied by index structures (such as node data or ART-based lookup structures). This leads to persistent memory pinning, culminating in memory bloat and potential system resource starvation. An example cited was the `FixedSizeAllocator` pinning all index blocks.
 
-####  Related Problems in the V1 design
+####  Related Problems in the beta1 design
 
-A rudimentary "V1" index design, particularly one characterized by a monolithic structure and lacking robust mechanisms for the management of auxiliary data, typically encounters the following substantial challenges:
+A rudimentary "beta1" index design, particularly one characterized by a monolithic structure and lacking robust mechanisms for the management of auxiliary data, typically encounters the following substantial challenges:
 
 1. **Durability Deficits and Post-Crash Inconsistencies:** Index modifications may not exhibit atomicity in conjunction with database transactions.  Indexes have no events in WAL.  This creates a vulnerability wherein data loss or index desynchronization can occur should a system failure transpire subsequent to a database commit but prior to the durable persistence of index alterations.
 2. **Inadequate Management of Transaction Rollbacks:** In the absence of stringent transaction integration, the rollback of a database transaction may result in the persistence of anomalous data artifacts (e.g., a vector subject to rollback remaining discoverable via search) within the index.
@@ -194,7 +194,7 @@ To maintain a strictly fixed `NodeBlock` size while accommodating nodes with a h
     8. Mark `N.NodeBlock` dirty and schedule for merge.
   - This helps keep the `lmd_backlink_overflow` table smaller and restores faster inline access for nodes whose popularity wanes.
 
-- **Cista and Union:** The backlink storage area can be implemented in C++ using a `union` as suggested in `user_critique_analysis_v1`.
+- **Cista and Union:** The backlink storage area can be implemented in C++ using a `union`
 
   ```
   // Within the NodeBlock struct
