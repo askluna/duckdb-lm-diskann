@@ -10,7 +10,7 @@ In LM-DiskANN, each graph node’s disk *block* contains *complete routing infor
 
 ## Architectural Overview
 
-### LM-Diskann Index
+### LM-Diskann Index Overview
 
 The LM-DiskANN variant of the algorithm we implemented is designed for low memory consumption by keeping only a small part of the vector index in memory while remaining efficient in search operations.  LM-DiskANN introduces a redundancy in the on-disk node format by storing both the graph and compressed neighbors on disk. So essentially, the LM-DiskANN algorithm trades memory usage for an increase in storage.
 
@@ -21,27 +21,7 @@ The LM-DiskANN variant of the algorithm we implemented is designed for low memor
 - **Graph Traversal**: The search typically starts from one or more entry points (random nodes or pre-defined start nodes). It iteratively explores neighbors, using the beam search strategy to select which nodes' full data (including their neighbor lists) to fetch from disk.
 - **Re-ranking**: After the graph traversal phase guided by compressed vectors, a re-ranking step is performed. The full-precision vectors of the final candidate nodes (those visited or identified as promising during the search) are fetched (if not already cached) and used to compute precise distances to the query, yielding the final top-k results.
 
-### Design of LM-DiskANN as a DuckDB extension
-
-**Index-as-Folder Design:** Each LM-DiskANN index is self-contained in its own directory on disk, isolating its files from the main database. This directory contains two primary components:
-
-- **Primary Graph File/Files (`graph_001.lmd`):** An append-only binary file storing the ANN graph’s nodes in fixed-size *NodeBlock* units (e.g. 8 KB per node). Each NodeBlock holds one vector and its adjacency list (neighbors), as detailed below. This is the main diskann index data on disk.
-- **Index Store Database (`diskann_store.duckdb`):** A DuckDB *secondary database* (with its own WAL) that maintains all auxiliary metadata for the index. Using a DuckDB database file leverages robust recovery and transactional integrity for index metadata. Key tables in this store include:
-  - **Shadow Delta Table (`__lmd_blocks`):** A WAL-backed table recording new or modified NodeBlocks (as whole blobs) that have not yet been merged into the main graph file. This serves as a durable delta “journal” of pending updates.
-  - **RowID↔NodeID Mapping Table (`lmd_lookup`):** Maps each DuckDB base table **row_id** to its corresponding **node_id** in the ANN graph. This indirection allows translating search results back to user tuples and permits row-id reuse handling.
-  - **Index Metadata Table (`index_metadata`):** Stores global metadata (vector dimension, graph parameters like max degree `R`, current node count, next node ID, etc.) and dynamic state (e.g. a merge sequence number, free list head for reclaimed blocks). Keeping this in a table ensures atomic updates and easy verification.
-  - **Tombstone Nodes Table (`tombstoned_nodes`):** Tracks *logically deleted* nodes. Each entry is a node_id and a deletion epoch, indicating the node has been removed and should be ignored by searches (and eventually reclaimed).
-  - **Free Nodes Table (`tombstoned_nodes`):** Tracks *logically deleted* nodes. Each entry is a node_id and a deletion epoch, indicating the node has been removed and should be ignored by searches (and eventually reclaimed).
-
-#### Advantages
-
-**Isolation and Maintainability:** By confining index data to a dedicated folder, the extension keeps failures localized. A crash or corruption in the index files does not affect the main DuckDB database. Backup and restore of an index is as simple as copying its folder, and dropping the index means deleting that folder. The main DuckDB database stores only a reference to the index location and perhaps minimal info (like the index name and config in the catalog), keeping the index largely decoupled.
-
-**High-Level Operation:** When the index is in use, queries first consult in-memory caches, then the `diskann_store.duckdb` tables, and finally `graph.lmd` on SSD, to retrieve NodeBlocks. Updates (inserts or deletes) are applied by writing new NodeBlocks to the shadow table (`__lmd_blocks`) within the store DB, under transaction protection. A background process later *merges* these changes into `graph.lmd` in bulk. This design provides **transactional semantics** (via the store DB’s WAL and DuckDB’s transactions) and **high I/O performance** by batching writes.
-
-
-
-## Key Design Goals
+### Key Design Goals
 
 * **Dynamic Updates & Low Write Amplification:** Instead of expensive full-file rewrites on each update, use an incremental log-structured approach. Only modified blocks are written to the shadow delta store and periodically merged to the main file, making write cost proportional to changes (\~O(dirty\_blocks)) rather than total index size.
 * **Correctness under Concurrency:** Avoid any shared in-place mutations that could break consistency. All updates produce new block copies (copy-on-write) and use versioning and transactional metadata to ensure readers see a consistent snapshot. This prevents issues like partial writes or stale pointers from “merged pages” or shared references.
@@ -50,16 +30,14 @@ The LM-DiskANN variant of the algorithm we implemented is designed for low memor
 * **Scalability to 10M–1B+ vectors:** The design should efficiently handle today’s target of \~100 million vectors per index, and remain forward-compatible with multi-billion scales at very cheap cost. This implies 64-bit identifiers and careful disk space management (free lists, compaction) to avoid overflow or fragmentation. The block ID space is monotonic (IDs 0..N-1) and never reused, enabling neighbor references to fit in 32 bits for large N (up to \~4B nodes) and simplifying pointer updates.
 * **Isolation and Maintainability:** By isolating index storage in its own files, the design contains potential failures. The main DuckDB database is unaffected by index file corruption or crashes in the extension. Backup/restore of an index is as simple as copying its folder, and dropping an index just deletes that folder.
 
+### Deficiencies in a buffer managed duckdb index
 
-
-## Deficiencies in a Single Database/Table Model:
-
-###  Main roadblocks
+####  Main roadblocks
 
 1. **"Index lacks access to WAL events"** This fundamental deficiency signifies that alterations to the index's state, particularly concerning auxiliary data structures such as lookup tables or metadata, are not safeguarded by a Write-Ahead Log that is synchronized with database transactions. The consequences include a loss of atomicity and durability for index operations, creating risks of data loss during system failures, inconsistent behavior during rollbacks, and non-atomic commits between the database and the index.
 2. **"BufferManager fails to deallocate memory for index or ART data"** A "V1" design's misuse of the database's buffer manager can prevent the deallocation of memory occupied by index structures (such as node data or ART-based lookup structures). This leads to persistent memory pinning, culminating in memory bloat and potential system resource starvation. An example cited was the `FixedSizeAllocator` pinning all index blocks.
 
-###  Related Problems in the V1 design
+####  Related Problems in the V1 design
 
 A rudimentary "V1" index design, particularly one characterized by a monolithic structure and lacking robust mechanisms for the management of auxiliary data, typically encounters the following substantial challenges:
 
@@ -67,7 +45,59 @@ A rudimentary "V1" index design, particularly one characterized by a monolithic 
 2. **Inadequate Management of Transaction Rollbacks:** In the absence of stringent transaction integration, the rollback of a database transaction may result in the persistence of anomalous data artifacts (e.g., a vector subject to rollback remaining discoverable via search) within the index.
 3. **Elevated Write Amplification and Suboptimal Update Performance:** Elementary designs can necessitate the rewriting of substantial index segments for minor updates, such as the addition of a node. This approach is demonstrably inefficient for dynamic workloads characterized by frequent modifications.
 4. **Propagation of Stale Data:** Within graph-based indexes, alterations to a vector or the graph topology can lead to referencing nodes retaining outdated information, consequently diminishing search accuracy. The immediate and universal propagation of such changes is often prohibitively expensive.
-5. **Complex and Resource-Intensive Rebuilds and Maintenance Operations:** Simpler designs tend to exhibit performance degradation over time, frequently mandating comprehensive and costly index reconstruction. The management of data fragmentation and the reclamation of storage space also present considerable difficulties.
+5. **Complex and Resource-Intensive Rebuilds and Maintenance Operations:** Simpler designs tend to exhibit performance degradation over time, frequently mandating comprehensive and costly index reconstruction. The management of data fragmentation and the reclamation of storage space also present considerable difficulties. 
+
+## Design of LM-DiskANN as a DuckDB extension
+
+**Index-as-Folder Design:** Each LM-DiskANN index is self-contained in its own directory on disk, isolating its files from the main database. The index folder contains a shadow duckdb table and graph files.  From the user’s perspective, the LM-DiskANN index behaves like a native index in DuckDB. The typical usage is:
+
+```sql
+-- Create an index on the vector column using LM_DiskANN
+CREATE INDEX myindex ON table_name USING LM_DiskANN(vector_column) 
+WITH (dimensions=128, block_size=8192, distance_metric='Cosine', R=64, ... index_location =  'path/to/myindex_data_folder', 
+-- The path will be relative to current index [mvp1], or with prefix (https/s3/etc...)
+);
+```
+
+This statement causes DuckDB to call into the extension’s index creation routine.
+
+### Directory Layout
+
+This directory contains the following components:
+
+- **Index Metadata file (`metadata.lmd`):** Stores global metadata such as vector dimension, graph parameters (e.g., max degree `R`, `alpha` for GSNG), distance metric, and the calculated `NodeBlock` size (e.g., 8192 bytes). These are typically fixed at index creation.
+
+- **Primary Graph Files (`graph.lmd`):** A binary file storing the ANN graph’s nodes in fixed-size `NodeBlock` units. Each `NodeBlock` holds one vector, its adjacency list (neighbor IDs and their compressed vectors), and associated metadata. While logically growing, this file can have blocks updated (via copy-on-write to a new location or the delta store, with the old block eventually freed) or internal free space reused, so it's not strictly append-only after initial build. This is the primary on-disk representation of the graph structure.
+
+- **Index Store Database (`diskann_store.duckdb`):** A DuckDB *secondary database* (with its own Write-Ahead Log - WAL) that maintains all auxiliary metadata for the LM-DiskANN index. Utilizing a DuckDB database file leverages its robust recovery mechanisms and transactional integrity for managing the index's evolving state. Key tables within this store include:
+
+  - **Shadow Delta Table (`lmd_delta_blocks`):** A WAL-backed table that records new or modified `NodeBlocks` as opaque blobs. These are changes (e.g., new nodes, updated neighbor lists from healing) that have been committed but not yet merged into the `graph.lmd` file. It serves as a durable journal of pending updates, ensuring that recent changes are queryable and recoverable.
+
+  - **RowID↔NodeID Mapping Table (`lmd_lookup`):** Maps each DuckDB base table `row_id` to its corresponding `node_id` in the ANN graph. This indirection is crucial for translating search results back to user-level tuples and for correctly handling scenarios where DuckDB might reuse `row_id`s after deletions.
+
+  - **Tombstone Nodes Table (`lmd_tombstoned_nodes`):** Tracks `node_id`s that have been logically deleted from the graph. Each entry typically includes the `node_id` and a deletion epoch/timestamp. Nodes in this table are ignored by searches (for transactions after the deletion epoch) and are candidates for eventual reclamation by the sweeper process.  The `NodeBlocks` themselves have tombstone flag.
+
+  - **Free Nodes Table (`lmd_free_nodes`):** Maintains a list of `node_id`s (and their corresponding block locations in `graph.lmd`) that have been fully processed after deletion and whose space is now available for reuse by new node insertions. This helps in managing disk space and mitigating fragmentation within `graph.lmd`.
+
+  - **Sweep List (`lmd_sweep_list`):** A queue or list of `node_id`s that require processing by the background sweeper. Entries are added here to manage various stages of node lifecycle and maintenance:
+
+    - When a node is initially tombstoned, its `node_id` might be added to signal the sweeper to begin processing its deletion (which includes initiating edge healing for its neighbors and eventually reclaiming its block).
+    - When a node's block is updated (e.g., due to an insertion, its own vector changing, or its neighbor list being modified by an edge healing operation) and the new version is in `lmd_delta_blocks`, its `node_id` is added to signal the sweeper to merge this updated block into `graph.lmd`.
+    - May also track nodes identified for other maintenance, like block recompaction due to high internal fragmentation (many deleted neighbor entries).
+
+  - **Heal List (`lmd_heal_list`):** Tracks `node_id`s that have been identified by the sweeper or other maintenance processes as needing proactive graph connectivity adjustments or neighborhood optimization, not necessarily tied to an immediate deletion of one of their direct neighbors. This list supports tasks like:
+
+    - Periodic graph quality checks where the sweeper identifies nodes whose neighborhoods have become suboptimal over time due to cumulative changes in the graph.
+
+    - Rewiring or optimizing connections for nodes that might be critical for graph connectivity but whose current linkage could be improved based on broader graph heuristics.
+
+      This list is distinct from the immediate, reactive healing of a deleted node's direct neighbors (which is typically handled when the sweeper processes a tombstone from the `lmd_sweep_list`).
+
+#### Advantages
+
+**Isolation and Maintainability:** By confining index data to a dedicated folder, the extension keeps failures localized. A crash or corruption in the index files does not affect the main DuckDB database. Backup and restore of an index is as simple as copying its folder, and dropping the index means deleting that folder. The main DuckDB database stores only a reference to the index location and perhaps minimal info (like the index name and config in the catalog), keeping the index largely decoupled.
+
+**High-Level Operation:** When the index is in use, queries first consult in-memory caches, then the `diskann_store.duckdb` tables, and finally `graph.lmd` on SSD, to retrieve NodeBlocks. Updates (inserts or deletes) are applied by writing new NodeBlocks to the shadow table (`__lmd_blocks`) within the store DB, under transaction protection. A background process later *merges* these changes into `graph.lmd` in bulk. This design provides **transactional semantics** (via the store DB’s WAL and DuckDB’s transactions) and **high I/O performance** by batching writes.
 
 ## Node Block Layout and Graph Structure
 
@@ -76,13 +106,13 @@ Each vector in the index corresponds to a **NodeBlock** in the `graph.lmd` file.
 **Contents of a NodeBlock:** Each block is essentially a self-contained representation of a graph node and its neighbors. The layout is:
 
 - **Node Header:** Includes administrative fields:
-  - `node_id` (uint64) – Unique identifier for the node (also determines its block position). Assigned once and never reused.
-  - `row_id` (int64) – The DuckDB row identifier of the tuple this vector came from. This is stored for verification or recovery (and to rebuild `lmd_lookup` if needed).
-  - `origin_txn_id` (int64) – The DuckDB transaction ID that created or last modified this node block.
-  - `commit_epoch` (int64) – A monotonically increasing commit timestamp or epoch given when the creating transaction committed. Used for MVCC visibility checks.
-  - `node_version` (int64) – A local version counter incremented on each update to this block (neighbors or vector). Helps resolve concurrent write conflicts by choosing the highest version.
-  - `tombstone` (boolean) – A flag indicating the node is logically deleted. Set to true when a deletion is committed; causes searches to ignore this node.
-  - `checksum` (uint64) – Checksum (e.g. xxHash64) of the block’s content for corruption detection.
+    - `node_id` (uint64) – Unique identifier for the node (also determines its block position). Assigned once and never reused.
+    - `row_id` (int64) – The DuckDB row identifier of the tuple this vector came from. This is stored for verification or recovery (and to rebuild `lmd_lookup` if needed).
+    - `origin_txn_id` (int64) – The DuckDB transaction ID that created or last modified this node block.
+    - `commit_epoch` (int64) – A monotonically increasing commit timestamp or epoch given when the creating transaction committed. Used for MVCC visibility checks.
+    - `node_version` (int64) – A local version counter incremented on each update to this block (neighbors or vector). Helps resolve concurrent write conflicts by choosing the highest version.
+    - `tombstone` (boolean) – A flag indicating the node is logically deleted. Set to true when a deletion is committed; causes searches to ignore this node.
+    - `checksum` (uint64) – Checksum (e.g. xxHash64) of the block’s content for corruption detection.
 - **Vector Data:** The full uncompressed feature vector for this node (e.g., an array of `float` values of length = dimension). This is used for accurate distance calculations when needed (e.g., final re-ranking).
 - **Neighbor List:** An array of neighbor **node_ids** (e.g., up to `R` neighbors, where `R` is the max degree). These are the outgoing edges in the graph from this node. Neighbors are typically chosen based on nearest-neighbor criteria (the graph is often built using something like the Vamana or NSW algorithm).
 - **Compressed Neighbor Vectors:** For each neighbor in the list, a compressed representation of that neighbor’s vector is stored. Commonly product quantization or tertiary quantization is used to shrink vectors (e.g., 16× smaller) while preserving distance approximations. Storing these in the NodeBlock allows distance computations to neighbors without loading each neighbor’s full NodeBlock from disk – only the current block is needed.
