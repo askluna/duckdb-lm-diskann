@@ -318,7 +318,7 @@ void LmDiskannIndex::PublicMarkDirty(bool dirty_state) {
 	}
 	std::cout << "LmDiskannIndex::PublicMarkDirty called (now delegates to "
 	             "Coordinator primarily)"
-	          << std::endl;
+	          << "\n";
 }
 
 float LmDiskannIndex::PublicCalculateApproxDistance(const float *query_ptr,
@@ -793,7 +793,7 @@ void LmDiskannIndex::InitializeNewIndex(idx_t estimated_cardinality) {
 	}
 	std::cout << "LmDiskannIndex::InitializeNewIndex called (now delegates to "
 	             "Coordinator primarily)"
-	          << std::endl;
+	          << "\n";
 }
 
 /**
@@ -847,7 +847,7 @@ void LmDiskannIndex::LoadFromStorage(const ::duckdb::IndexStorageInfo &storage_i
 	}
 	std::cout << "LmDiskannIndex::LoadFromStorage called (now delegates to "
 	             "Coordinator primarily)"
-	          << std::endl;
+	          << "\n";
 }
 
 // --- Distance Helper Wrappers --- //

@@ -29,11 +29,11 @@ StorageManager::StorageManager(const LmDiskannConfig &config, const NodeLayoutOf
 	if (!primary_storage_service_) {
 		throw common::InternalException("StorageManager: IPrimaryStorageService pointer cannot be null.");
 	}
-	std::cout << "StorageManager: Constructed with services." << std::endl;
+	std::cout << "StorageManager: Constructed with services." << "\n";
 }
 
 StorageManager::~StorageManager() {
-	std::cout << "StorageManager: Destructed." << std::endl;
+	std::cout << "StorageManager: Destructed." << "\n";
 }
 
 // --- Private Helper Methods Implementation (Derived from old global functions) ---
@@ -166,7 +166,7 @@ common::row_t StorageManager::GetConsistentEntryPointRowId(common::IndexPointer 
 	if (graph_entry_point_ptr.Get() != 0) {
 		std::cerr << "Warning: GetConsistentEntryPointRowId: Cannot get row_id from pointer yet (V2 requires reading block "
 		             "header via IFileSystemService or using IShadowStorageService)."
-		          << std::endl;
+		          << "\n";
 		// Original logic from global GetEntryPointRowId might have had more here, or assumed an early return.
 		// For V2, resolving graph_entry_point_ptr to a row_id will likely involve shadow_storage_service_
 		// or reading a block header via file_system_service_.

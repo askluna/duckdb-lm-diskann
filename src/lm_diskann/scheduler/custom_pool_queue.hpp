@@ -1,7 +1,9 @@
 // ==========================================================================
-// File: diskann/scheduler/custom_pool_queue.hpp
-// Description: Declares the PriorityTaskQueue for the custom thread pool,
-//              using standard library queues, mutex, and condition variable.
+/**
+ * @file diskann/scheduler/custom_pool_queue.hpp
+ * @brief Declares the PriorityTaskQueue for the custom thread pool,
+ *        using standard library queues, mutex, and condition variable.
+ */
 // ==========================================================================
 #pragma once
 
@@ -19,7 +21,7 @@ namespace scheduler {
 
 /**
  * @brief Implements a two-priority task queue using std::queue, std::mutex, and std::condition_variable.
- * Used by the custom BackgroundWorkerPool.
+ * Used by the BackgroundWorkerPool.
  */
 class PriorityTaskQueue {
 	public:
@@ -43,7 +45,7 @@ class PriorityTaskQueue {
 	 * @brief Attempts to pop a high-priority task, waiting for a specified timeout.
 	 * @param out_task Reference to store the popped task.
 	 * @param timeout The maximum duration to wait.
-	 * @return True if a task was popped, false if timed out or interrupted.
+	 * @return True if a task was popped, false if timed out.
 	 */
 	bool wait_pop_high_timed(scheduler::CustomPoolTask &out_task, std::chrono::microseconds timeout);
 
@@ -51,21 +53,21 @@ class PriorityTaskQueue {
 	 * @brief Attempts to pop a medium-priority task, waiting for a specified timeout.
 	 * @param out_task Reference to store the popped task.
 	 * @param timeout The maximum duration to wait.
-	 * @return True if a task was popped, false if timed out or interrupted.
+	 * @return True if a task was popped, false if timed out.
 	 */
 	bool wait_pop_medium_timed(scheduler::CustomPoolTask &out_task, std::chrono::microseconds timeout);
 
 	/**
-	 * @brief Gets the exact count of tasks in the medium queue (requires lock).
+	 * @brief Gets the exact count of tasks in the medium queue.
 	 * @return Number of tasks.
 	 */
-	size_t medium_queue_size() const; // Renamed from _approx, requires lock
+	size_t medium_queue_size() const;
 
 	/**
-	 * @brief Gets the exact count of tasks in the high queue (requires lock).
+	 * @brief Gets the exact count of tasks in the high queue.
 	 * @return Number of tasks.
 	 */
-	size_t high_queue_size() const; // Renamed from _approx, requires lock
+	size_t high_queue_size() const;
 
 	/**
 	 * @brief Notifies all waiting threads, typically used during shutdown.
@@ -73,9 +75,17 @@ class PriorityTaskQueue {
 	void notify_all_waiters();
 
 	private:
-	mutable std::mutex queue_mutex_; // Mutable to allow locking in const size() methods
+	/// @brief Mutex protecting access to the queues.
+	/// Mutable to allow locking in const size() methods.
+	mutable std::mutex queue_mutex_;
+
+	/// @brief Queue for high priority tasks.
 	std::queue<scheduler::CustomPoolTask> high_priority_queue_;
+
+	/// @brief Queue for medium priority tasks.
 	std::queue<scheduler::CustomPoolTask> medium_priority_queue_;
+
+	/// @brief Condition variable for worker threads to wait on.
 	std::condition_variable cv_;
 };
 

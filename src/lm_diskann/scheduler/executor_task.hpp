@@ -1,33 +1,51 @@
 // ==========================================================================
-// File: diskann/common/executor_task.hpp
-// Description: Declares the generic ExecutorTask wrapper for tasks
-//              submitted to DuckDB's scheduler.
+/**
+ * @file diskann/scheduler/executor_task.hpp
+ * @brief Declares the generic ExecutorTask wrapper for tasks
+ *        submitted to DuckDB's scheduler.
+ */
 // ==========================================================================
 #pragma once
 
-#include "duckdb_proxies.hpp" // Correct path
-#include "task_types.hpp"     // Correct path
+// #include "duckdb_proxies.hpp" // No longer needed for ExecutorTask base class
+#include "task_types.hpp"
 
-#include <memory> // For std::shared_ptr
+#include <duckdb/main/client_context.hpp>    // For ClientContext shared_ptr
+#include <duckdb/parallel/executor_task.hpp> // Actual DuckDB base class
+#include <memory>                            // For std::shared_ptr
 
 namespace diskann {
-namespace scheduler { // Changed from common
+namespace scheduler {
 
 /**
- * @brief A concrete duckdb::ExecutorTask that wraps a DuckDbSchedulerTaskDefinition.
+ * @brief A concrete duckdb::Task that wraps a DuckDbSchedulerTaskDefinition.
+ * This task is intended to be scheduled and executed by DuckDB's internal task scheduler.
  */
-class GenericDiskannTask : public duckdb::ExecutorTask {
+class GenericDiskannTask : public duckdb::Task {
 	public:
+	/**
+	 * @brief Constructs a GenericDiskannTask.
+	 * @param context The DuckDB client context for this task.
+	 * @param definition The definition of the work to be performed.
+	 */
 	GenericDiskannTask(std::shared_ptr<duckdb::ClientContext> context,
-	                   scheduler::DuckDbSchedulerTaskDefinition definition); // common:: -> scheduler::
+	                   scheduler::DuckDbSchedulerTaskDefinition definition);
 
-	// Execute method signature must match DuckDB's ExecutorTask base class.
-	// Assuming it takes TaskExecutionMode (adjust if needed based on actual DuckDB version)
-	void Execute(duckdb::TaskExecutionMode mode) override;
+	/**
+	 * @brief Executes the task.
+	 * This method is called by the DuckDB task scheduler.
+	 * @param mode The execution mode (e.g., regular or interrupt).
+	 */
+	duckdb::TaskExecutionResult Execute(duckdb::TaskExecutionMode mode) override;
+
+	virtual ~GenericDiskannTask() = default;
 
 	private:
+	/// @brief Pointer to the client context for this task.
 	std::shared_ptr<duckdb::ClientContext> context_ptr_;
-	scheduler::DuckDbSchedulerTaskDefinition task_definition_; // common:: -> scheduler::
+
+	/// @brief The definition of the task to be executed.
+	scheduler::DuckDbSchedulerTaskDefinition task_definition_;
 };
 
 } // namespace scheduler

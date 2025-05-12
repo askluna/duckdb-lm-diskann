@@ -23,7 +23,7 @@ BackgroundWorkerPool::BackgroundWorkerPool(size_t num_threads)
 	}
 
 	std::cout << "[Custom Pool] Starting " << num_threads << " background worker threads (using BlockingQueues)..."
-	          << std::endl;
+	          << "\n";
 
 	worker_threads_.reserve(num_threads);
 	for (size_t i = 0; i < num_threads; ++i) {
@@ -32,7 +32,7 @@ BackgroundWorkerPool::BackgroundWorkerPool(size_t num_threads)
 }
 
 BackgroundWorkerPool::~BackgroundWorkerPool() {
-	std::cout << "[Custom Pool] Destructor called, stopping workers..." << std::endl;
+	std::cout << "[Custom Pool] Destructor called, stopping workers..." << "\n";
 	stop_workers(); // Ensure workers are signaled to stop and joined.
 	                // jthreads will automatically join here if not already stopped and joined.
 }
@@ -40,7 +40,7 @@ BackgroundWorkerPool::~BackgroundWorkerPool() {
 void BackgroundWorkerPool::submit_task(scheduler::CustomPoolTask task,
                                        scheduler::TaskPriority priority) { // common:: -> scheduler::
 	if (stop_flag_.load(std::memory_order_acquire)) {
-		std::cout << "[Custom Pool] Warning: Task submitted after stop requested." << std::endl;
+		std::cout << "[Custom Pool] Warning: Task submitted after stop requested." << "\n";
 		return; // Or handle as an error
 	}
 	task_queue_->push(std::move(task), priority);
@@ -48,7 +48,7 @@ void BackgroundWorkerPool::submit_task(scheduler::CustomPoolTask task,
 
 void BackgroundWorkerPool::stop_workers() {
 	if (!stop_flag_.exchange(true, std::memory_order_acq_rel)) {
-		std::cout << "[Custom Pool] Signaling workers to stop..." << std::endl;
+		std::cout << "[Custom Pool] Signaling workers to stop..." << "\n";
 		// Request stop for all jthreads. They will check their stop_token.
 		for (auto &jt : worker_threads_) {
 			if (jt.joinable()) { // Check if it's still joinable (might have finished)
@@ -62,7 +62,7 @@ void BackgroundWorkerPool::stop_workers() {
 }
 
 void BackgroundWorkerPool::worker_loop(size_t worker_id, std::stop_token stoken) {
-	std::cout << "[Custom Pool] Worker thread " << worker_id << " started (Blocking Mode)." << std::endl;
+	std::cout << "[Custom Pool] Worker thread " << worker_id << " started (Blocking Mode)." << "\n";
 	scheduler::CustomPoolTask current_task; // common:: -> scheduler::
 	int high_priority_burst_allowance = DEFAULT_BURST_ALLOWANCE;
 
@@ -88,7 +88,7 @@ void BackgroundWorkerPool::worker_loop(size_t worker_id, std::stop_token stoken)
 
 		// If MEDIUM was also empty/timed_out, and we skipped HIGH due to burst, try HIGH again.
 		// This ensures HIGH isn't starved if MEDIUM queue is persistently empty.
-		if (!task_popped && high_priority_burst_allowance == 0 && task_queue_->high_queue_size_approx() > 0) {
+		if (!task_popped && high_priority_burst_allowance == 0 && task_queue_->high_queue_size() > 0) {
 			if (task_queue_->wait_pop_high_timed(current_task, WORKER_WAIT_TIMEOUT)) {
 				task_popped = true;
 				// No need to reset burst here, as it was 0. Next HIGH task will decrement it from DEFAULT.
@@ -100,18 +100,18 @@ void BackgroundWorkerPool::worker_loop(size_t worker_id, std::stop_token stoken)
 
 		if (task_popped) {
 			try {
-				// std::cout << "[Custom Pool] Worker " << worker_id << " executing task." << std::endl;
+				// std::cout << "[Custom Pool] Worker " << worker_id << " executing task." << "\n";
 				current_task.work();
 			} catch (const std::exception &e) {
-				std::cerr << "[Custom Pool] Worker " << worker_id << " caught exception: " << e.what() << std::endl;
+				std::cerr << "[Custom Pool] Worker " << worker_id << " caught exception: " << e.what() << "\n";
 			} catch (...) {
-				std::cerr << "[Custom Pool] Worker " << worker_id << " caught unknown exception." << std::endl;
+				std::cerr << "[Custom Pool] Worker " << worker_id << " caught unknown exception." << "\n";
 			}
 		}
 		// If no task was popped (all timed out), the loop checks stoken.stop_requested().
 		// The timed waits in wait_pop prevent busy-waiting.
 	}
-	std::cout << "[Custom Pool] Worker thread " << worker_id << " stopping." << std::endl;
+	std::cout << "[Custom Pool] Worker thread " << worker_id << " stopping." << "\n";
 }
 
 } // namespace scheduler

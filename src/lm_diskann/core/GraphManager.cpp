@@ -387,8 +387,7 @@ void GraphManager::RobustPrune(common::IndexPointer node_to_connect_ptr, const f
 	if (!node_to_connect_mutable_data) {
 		// Cannot update the node if we can't get mutable data
 		// Maybe throw an error or log? This indicates a problem.
-		std::cerr << "Warning: RobustPrune could not get mutable block data for node " << node_to_connect_ptr.Get()
-		          << std::endl;
+		std::cerr << "Warning: RobustPrune could not get mutable block data for node " << node_to_connect_ptr.Get() << "\n";
 		return;
 	}
 

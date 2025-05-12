@@ -1,69 +1,64 @@
 // ==========================================================================
-// File: diskann/common/executor_task.cpp
+// File: diskann/scheduler/executor_task.cpp
 // ==========================================================================
 #include "executor_task.hpp" // Correct path
 
+#include <duckdb/common/exception.hpp>    // For duckdb::ErrorData
+#include <duckdb/execution/executor.hpp>  // For Executor::Get
+#include <duckdb/main/client_context.hpp> // Needed for IsInterrupted check?
+#include <duckdb/parallel/task.hpp>       // For TaskExecutionResult
 #include <exception>
 #include <iostream>
 
 // --- DuckDB Headers (Actual includes needed for implementation) ---
-#include <duckdb/common/exception.hpp> // For duckdb::ErrorData
-#include <duckdb/main/client_context.hpp>
-#include <duckdb/parallel/executor_task.hpp>
+// #include <duckdb/common/exception.hpp> // Now included via duckdb::ErrorData
+// #include <duckdb/main/client_context.hpp> // Now included via executor_task.hpp
+// #include <duckdb/parallel/executor_task.hpp> // Now included via executor_task.hpp
 // --- End DuckDB Headers ---
 
 namespace diskann {
 namespace scheduler { // Changed from common
 
-// Constructor needs to call the base class constructor.
-// The base ExecutorTask constructor expects a reference to the Executor, which it gets from the ClientContext.
+// Constructor: Initializes the base ExecutorTask with the context
 GenericDiskannTask::GenericDiskannTask(std::shared_ptr<duckdb::ClientContext> context,
                                        scheduler::DuckDbSchedulerTaskDefinition definition)
-    : duckdb::ExecutorTask(*context), // Pass the context to the base ExecutorTask constructor
-      context_ptr_(context),          // Store the shared_ptr for our use
-      task_definition_(std::move(definition)) {
+    : context_ptr_(context), task_definition_(std::move(definition)) {
 }
 
-void GenericDiskannTask::Execute(duckdb::TaskExecutionMode mode) {
-	// DuckDB tasks might be asked to interrupt. Handle this appropriately.
-	// Refer to DuckDB's Task documentation for exact handling (e.g., checking context->interrupted)
-	if (mode == duckdb::TaskExecutionMode::INTERRUPT) {
-		std::cout << "[GenericDiskannTask] Received INTERRUPT mode, skipping execution." << std::endl;
-		// Perform any necessary cleanup or state handling for interruption if needed.
-		return;
-	}
-
-	if (!task_definition_.work || !context_ptr_) {
-		std::cerr << "[GenericDiskannTask] Error: Null work function or context. Cannot execute." << std::endl;
-		// Depending on DuckDB's task error handling, you might need to signal an error state.
-		return;
-	}
-
+// Executes the wrapped task logic
+duckdb::TaskExecutionResult GenericDiskannTask::Execute(duckdb::TaskExecutionMode mode) {
 	try {
-		// std::cout << "[GenericDiskannTask] Executing task..." << std::endl;
-		task_definition_.work(*context_ptr_); // Execute the stored work function
-		                                      // std::cout << "[GenericDiskannTask] Task completed." << std::endl;
+		// Handle interruption signal from DuckDB scheduler
+		if (context_ptr_->interrupted) { // Changed interruption check
+			return duckdb::TaskExecutionResult::TASK_FINISHED;
+		}
+
+		// Execute the actual task function
+		task_definition_.work(*context_ptr_); // Changed to 'work' and dereference context_ptr_
+
+		return duckdb::TaskExecutionResult::TASK_FINISHED;
+	} catch (const duckdb::InterruptException &e) {
+		std::cerr << "[GenericDiskannTask] Interrupted: " << e.what() << "\n";
+		// Interruption is a normal way to stop tasks, usually not an error to be pushed.
+		// Re-throwing or ensuring the scheduler handles it is typical.
+		// For now, let's assume TASK_FINISHED is appropriate as the task stops.
+		return duckdb::TaskExecutionResult::TASK_FINISHED;
 	} catch (const std::exception &e) {
-		std::cerr << "[GenericDiskannTask] Exception during execution: " << e.what() << std::endl;
-		// Propagate the error to the DuckDB executor if possible/necessary.
-		// This might involve calling something like executor.PushError(...) if you have access
-		// to the Executor instance (ExecutorTask base class provides `executor` member).
+		std::cerr << "[GenericDiskannTask] Exception during execution: " << e.what() << "\n";
 		try {
-			executor.PushError(duckdb::ErrorData(e));
-		} catch (...) { /* Error pushing error? */
+			duckdb::Executor::Get(*context_ptr_).PushError(duckdb::ErrorData(e)); // Changed error handling
+		} catch (...) {                                                         /* Ignored */
 		}
+		return duckdb::TaskExecutionResult::TASK_ERROR;
 	} catch (...) {
-		std::cerr << "[GenericDiskannTask] Unknown exception during execution." << std::endl;
+		std::cerr << "[GenericDiskannTask] Unknown exception during execution." << "\n";
 		try {
-			executor.PushError(duckdb::ErrorData("Unknown exception in GenericDiskannTask"));
-		} catch (...) { /* Error pushing error? */
+			duckdb::Executor::Get(*context_ptr_)
+			    .PushError(duckdb::ErrorData("Unknown exception in GenericDiskannTask")); // Changed error handling
+		} catch (...) {                                                                 /* Ignored */
 		}
+		return duckdb::TaskExecutionResult::TASK_ERROR;
 	}
-	// DuckDB's ExecutorTask::Execute typically returns a TaskExecutionResult.
-	// Since this implementation doesn't have complex state (like blocking),
-	// we assume it finishes in one go when called in non-interrupt mode.
-	// The base class Execute might handle returning TASK_FINISHED/TASK_ERROR.
-	// If specific return values are needed, adjust this function signature and logic.
 }
 
 } // namespace scheduler
