@@ -81,20 +81,12 @@ This directory contains the following components:
 
     - `value`
 
-  - **Delta blocks Table (`lmd_delta_blocks`):** A WAL-backed table that records new or modified `NodeBlocks` as opaque blobs. These are changes (e.g., new nodes, updated neighbor lists from healing) that have been committed but not yet merged into the `graph.lmd` file. It serves as a durable journal of pending updates, ensuring that recent changes are queryable and recoverable.
-  
-    - `node_id` - pk
-
-    - `node_block`
-
-    - `creation_epoch`
-
   - **Tombstone Nodes Table (`lmd_tombstoned_nodes`):** Tracks `node_id`s that have been logically deleted from the graph. Each entry typically includes the `node_id` and a deletion epoch/timestamp. Nodes in this table are ignored by searches (for transactions after the deletion epoch) and are candidates for eventual reclamation by the sweeper process.  The `NodeBlocks` themselves have tombstone flag.
 
   - **Sweep List (`lmd_sweep_list`):** A queue or list of `node_id`s that require processing by the background sweeper. Entries are added here to manage various stages of node lifecycle and maintenance:
   
     - When a node is initially tombstoned, its `node_id` might be added to signal the sweeper to begin processing its deletion (which includes initiating edge healing for its neighbors and eventually reclaiming its block).
-    - When a node's block is updated (e.g., due to an insertion, its own vector changing, or its neighbor list being modified by an edge healing operation) and the new version is in `lmd_delta_blocks`, its `node_id` is added to signal the sweeper to merge this updated block into `graph.lmd`.
+    - When a node's block is updated (e.g., due to an insertion, its own vector changing, or its neighbor list being modified by an edge healing operation) andafter its processing: its `node_id` is added to signal the sweeper to merge this updated block into `graph.lmd`.
     - May also track nodes identified for other maintenance, like block recompaction due to high internal fragmentation (many deleted neighbor entries).
     - Periodic graph quality checks where the sweeper identifies nodes whose neighborhoods have become suboptimal over time due to cumulative changes in the graph.
     - Rewiring or optimizing connections for nodes that might be critical for graph connectivity but whose current linkage could be improved based on broader graph heuristics.
@@ -117,7 +109,7 @@ LM-DiskANN maintains DuckDB’s ACID properties and snapshot isolation by embedd
 
 ***\*Creation\** Epochs and Visibility:** Each `NodeBlock`'s `creation_epoch` (a durable visibility marker from DuckDB) is compared against a query's snapshot epoch. Blocks with `creation_epoch` greater than the query's snapshot are ignored, preventing reads of "future" data. Uncommitted blocks lack a globally visible `creation_epoch` and are invisible to other transactions.
 
-**Transaction ID and Abort Handling:** Only data from committed transactions becomes durable. The flush logic writing to `lmd_delta_blocks` verifies transaction status with DuckDB; aborted transaction data is discarded, preventing "ghost" blocks. Recovery and startup checks reconcile `lmd_lookup` mappings with `NodeBlock` data, removing orphaned mappings from incomplete insertions to ensure consistency.
+**Transaction ID and Abort Handling:** Only data from committed transactions becomes durable. The flush logic writing to `lmd_delta_operations` verifies transaction status with DuckDB; aborted transaction data is discarded, preventing "ghost" blocks. Recovery and startup checks reconcile `lmd_lookup` mappings with `NodeBlock` data, removing orphaned mappings from incomplete insertions to ensure consistency.
 
 **Tombstones and Snapshot Isolation:** Logical deletions are transactional. A deleted `node_id` is recorded in `lmd_tombstoned_nodes` with a `deletion_epoch`. Visibility depends on the query's snapshot epoch relative to this `deletion_epoch`: older snapshots see the node as live, newer ones see it as deleted. The `is_tombstone` flag in `NodeBlock`s and the `lmd_tombstoned_nodes` table ensure correct visibility across snapshots. Committed deletions are invisible to new queries.
 
