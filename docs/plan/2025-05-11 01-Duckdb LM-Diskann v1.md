@@ -112,13 +112,12 @@ Each block is a self-contained unit representing a graph node, its vector, its c
 1. **Header (e.g., ~48-56 bytes, `alignas(64)` for the whole block):**
    - `node_id` (uint64): Unique identifier for the node. Also typically determines its primary block position in `graph.lmd` when not using a free list slot. Assigned once and ideally never reused to simplify consistency.
    - `row_id` (int64): The DuckDB `row_id` of the base table tuple this vector corresponds to. Essential for mapping search results back to user data and for potential index rebuilds or verification.
-   - `commit_epoch` (int64): A monotonically increasing timestamp or sequence number assigned when the transaction that created/last modified this block version committed. This is fundamental for MVCC visibility.
+   - `creation_epoch` (int64): A monotonically increasing timestamp or sequence number assigned when the transaction that created/last modified this block version committed. This is fundamental for MVCC visibility.
    - `flags` (uint8): A bitfield for various states:
      - Bit 0: `IS_TOMBSTONED` (1 if logically deleted, 0 otherwise).
-     - Bit 1: `HAS_OVERFLOW_BACKLINKS` (1 if backlinks for this node exist in `lmd_backlink_overflow`, 0 otherwise). This acts as the discriminator for the backlink union.
+     - Bit 1: `IS_OVERFLOW` (1 if backlinks for this node exist in `lmd_node_overflow`, 0 otherwise). This acts as the discriminator for the backlink union.
      - (Other bits reserved for future use, e.g., compaction status, pin status).
    - `num_forward_links` (uint16): Current count of active forward links stored in this block.
-   - `num_inline_backlinks` (uint16): Current count of active backlinks stored directly within this block (relevant only if `HAS_OVERFLOW_BACKLINKS` is 0).
    - `checksum` (uint32/uint64): Checksum (e.g., xxHash32/64) of the block's content (excluding the checksum field itself) for detecting corruption.
 2. **Vector Data:**
    - `vector` (float[DIMENSION], `alignas(32)`): The full-precision, uncompressed feature vector for this node. `DIMENSION` is fixed at index creation.
@@ -133,29 +132,45 @@ Each block is a self-contained unit representing a graph node, its vector, its c
      - `inline_backlink_node_ids` (uint32[R_b], `alignas(32)`): Array storing `node_id`s of nodes that have this node in their forward links.
        - Capacity: `R_b`. Per your request, we'll set `R_b = 2 * R_f`.
        - Unused slots are marked. `num_inline_backlinks` tracks the count.
-   - **If `flags.HAS_OVERFLOW_BACKLINKS == 1`:**
-     - `overflow_reference` (uint32 or uint64): This field occupies the first few bytes of the backlink storage area. It stores a reference (e.g., the `node_id` itself to be used as a key in `lmd_backlink_overflow`, or a direct row ID if feasible) to the `lmd_backlink_overflow` table where all backlinks for this node are now stored. The remaining bytes of the `inline_backlink_node_ids` array area are unused in this mode. The `num_inline_backlinks` header field would be 0 or a special value.
+   - **If `flags.overflow == 1`:**
+     - `overflow_reference` (uint64): This field occupies the first few bytes of the backlink storage area. It stores a reference (e.g., the `node_id` itself to be used as a key in `lmd_node_overflow`, table.
 5. **Padding:**
    - Any remaining bytes to ensure the `NodeBlock` fills its allocated fixed size (e.g., 8192 bytes).
 
 **Graph Structure and Identifier Management:** The overall graph structure (navigable small-world) and `node_id` management (64-bit, monotonic, no reuse) remain as previously described. The key change is the explicit, symmetric storage of backlinks within the node block itself, up to `R_b` capacity, with a defined overflow strategy.
+#### MVCC Field in Node Header: `creation_epoch`
 
-#### MVCC Field in Node Header: `commit_epoch`
+**`creation_epoch` (timestamp_t):** *(Note: `timestamp_t` is DuckDB's internal representation for timestamps. In your C++ struct for the Node Header, you'd use `duckdb::timestamp_t`).*
 
-The `commit_epoch` field is critical for integrating the LM-DiskANN index with DuckDB's transactional semantics, ensuring data consistency, especially under concurrent operations and in recovery scenarios. It is the primary mechanism for Multi-Version Concurrency Control (MVCC) within the index.
+- **Purpose**: This field stores the timestamp representing the start time of the DuckDB transaction that created this `NodeBlock` version. This timestamp is obtained from DuckDB's active `MetaTransaction` and serves as an ordered epoch for Multi-Version Concurrency Control (MVCC) within the index.
 
-**`commit_epoch` (int64):**
+- **Source**: When an LM-DiskANN operation (insert/update) occurs within a DuckDB transaction, the extension code will retrieve the current `MetaTransaction` using the active `ClientContext`. The `creation_epoch` for the new `NodeBlock` version is then set to `MetaTransaction::Get(context).start_timestamp`.
 
-- **Purpose:** This field stores a monotonically increasing value, typically the "commit timestamp" or a unique, ordered transaction commit ID that DuckDB assigns to every transaction upon successful completion. When a new `NodeBlock` version is created (due to insertion or update) and its creating transaction commits, this `commit_epoch` is stamped onto the `NodeBlock`. Blocks from uncommitted transactions (e.g., those still in `lmd_delta_blocks` before their transaction fully commits or those in an in-memory dirty buffer) would effectively have a "pending" or no valid `commit_epoch` until their transaction commits.
-- **Utility (Fundamental for MVCC):**
-  1. **Snapshot Isolation / Visibility:** This is the cornerstone of MVCC. Each active reader transaction in DuckDB operates with a "snapshot epoch" (typically the `commit_epoch` of the latest committed transaction when the reader transaction started, or a similar logical timestamp derived from DuckDB's transaction manager, like `transaction.start_time`). A reader transaction can only "see" `NodeBlock` versions where `NodeBlock.commit_epoch <= reader_transaction.snapshot_epoch`. This check is performed locally when a `NodeBlock` is accessed, allowing instant visibility decisions without consulting external tables.
-  2. **Preventing Dirty Reads:** Ensures transactions do not read data from other uncommitted transactions, as uncommitted blocks will not yet have a `commit_epoch` (or will have one that is not yet globally visible/valid).
-  3. **Preventing Non-Repeatable Reads:** Ensures that if a transaction reads a node, and another transaction later updates and commits that node (creating a new version with a later `commit_epoch`), the first transaction (if it re-reads) will still see the old version appropriate for its snapshot epoch.
-  4. **Safe Tombstone Processing & Space Reclamation:** The sweeper process uses `commit_epoch`s to determine when it's safe to physically reclaim a block or process a tombstone. Specifically, a tombstoned node (marked in `lmd_tombstoned_nodes` with its deletion's `commit_epoch`) cannot be fully reclaimed if any active reader transaction in the system has a snapshot epoch older than the tombstone's `commit_epoch`. The sweeper checks against the global minimum active snapshot epoch (e.g., `TransactionManager::Get(db).LowestActiveStartTime()` in DuckDB) to ensure no reader can still see the node as "live."
-  5. **Rollback Handling:** While `origin_txn_id` was previously considered for explicit rollback tracking, relying on `commit_epoch` simplifies this. If a transaction writing new `NodeBlock` versions aborts, those blocks will never receive a valid, globally visible `commit_epoch`. Thus, they will naturally be invisible to all other transactions and can be garbage collected by the system (e.g., not merged from `lmd_delta_blocks` if their creating transaction didn't commit).
-- **Source of `commit_epoch`:** DuckDB's transaction manager provides this value. For instance, upon a transaction's commit, `transaction.commit_id` (or an equivalent epoch like `transaction.start_time` if used consistently for snapshotting) is obtained and persisted with the `NodeBlock` data in `lmd_delta_blocks`.
+  - Example C++ (conceptual, within your extension's write path):
 
-By embedding the `commit_epoch` directly into each `NodeBlock`, the system allows every component (reader, writer, sweeper) to make visibility and safety decisions locally and efficiently, often with zero extra I/O or complex locking, fully leveraging DuckDB's existing MVCC machinery.
+    ```
+    cpp
+    // Assuming 'context' is your available ClientContext&
+    duckdb::MetaTransaction &meta_txn = duckdb::MetaTransaction::Get(context);
+    duckdb::timestamp_t current_txn_start_time = meta_txn.start_timestamp; 
+    // Or, using the convenience getter:
+    // duckdb::timestamp_t current_txn_start_time = meta_txn.GetCurrentTransactionStartTimestamp();
+    
+    // When creating/updating a NodeBlock:
+    my_node_block_header.creation_epoch = current_txn_start_time; 
+    // ... then write the block to lmd_delta_blocks ...
+    ```
+
+- **Utility (Fundamental for MVCC)**:
+
+  1. **Snapshot Isolation / Visibility**: Each active reader transaction `T_reader` operates with its own start timestamp (let's call it `reader_start_epoch`, obtained similarly: `MetaTransaction::Get(reader_context).start_timestamp`). `T_reader` can "see" `NodeBlock` versions where:
+     - `NodeBlock.creation_epoch <= reader_start_epoch`
+     - **AND** the transaction that started at `NodeBlock.creation_epoch` (and had the corresponding `global_transaction_id`) has successfully committed.
+     - The "committed" status is handled by DuckDB's core transaction lifecycle. Data from `lmd_delta_blocks` associated with an aborted transaction will not be consolidated into the main index structure or will be eligible for cleanup. Readers querying the consolidated index inherently see only committed data.
+  2. **Preventing Dirty Reads**: Transactions do not read data from other uncommitted transactions because uncommitted blocks (in `lmd_delta_blocks`) are not yet visible or consolidated based on their `creation_epoch`'s commit status.
+  3. **Preventing Non-Repeatable Reads**: Ensures that if `T_reader` (with `reader_start_epoch`) reads a node, and another transaction `T_writer_new` later updates and commits that node (creating a new version with `NodeBlock_new.creation_epoch` where `NodeBlock_new.creation_epoch` is the start time of `T_writer_new`, and this start time is naturally after or concurrent but committed later than `T_reader`'s view), `T_reader` will still see the old version if `NodeBlock_new.creation_epoch > reader_start_epoch` or if `T_writer_new` is not yet committed from `T_reader`'s perspective.
+  4. **Safe Tombstone Processing & Space Reclamation**: The sweeper process uses `creation_epoch` values. A tombstoned node (marked with its deletion's `creation_epoch`) can be reclaimed only if its `creation_epoch` corresponds to a committed transaction and is older than the `start_timestamp` of any currently active reader transaction (e.g., older than `DuckTransactionManager::LowestActiveStart()`). The `DuckTransactionManager::LowestActiveStart()` method seems particularly relevant here.
+  5. **Rollback Handling**: If a transaction writing new `NodeBlock` versions aborts, those blocks (identifiable by their `creation_epoch` which matches the aborted transaction's `start_timestamp`) are effectively ignored. They will not be merged from `lmd_delta_blocks`.
 
 
 
@@ -243,3 +258,17 @@ Entries are the **latest committed versions** of `NodeBlock`s not yet merged int
 **Free List Management and Space Reuse (`lmd_free_nodes`):** Vacant `NodeBlock` slots in `graph.lmd` from deletions are managed by a free list (e.g., `lmd_free_nodes` table or tracked in `lmd_metadata`). During merges, slots of tombstoned nodes are added to this list. New `NodeBlock`s reuse these free slots before appending, mitigating fragmentation and controlling file size. The strategy is conservative: existing blocks are not moved to fill internal holes (compaction is deferred), but tail trimming of `graph.lmd` is possible if trailing blocks are free. Periodic merges ensure efficient space reuse.
 
 **Durability and Recovery:** Modifications to `diskann_store.duckdb` tables (`lmd_delta_blocks`, `lmd_lookup`, etc.) are WAL-protected, providing standard DuckDB durability and atomicity. A committed vector insertion, for example, includes base table changes, `lmd_lookup` mapping, and `lmd_delta_blocks` data in the WAL. Crashes trigger WAL replay for `diskann_store.duckdb`, restoring consistency. The `graph.lmd` file is modified only by a crash-tolerant merge process (e.g., using temporary files and fsync before metadata updates). This two-tiered approach ensures that after recovery, shadow tables and metadata reflect committed but unmerged updates, allowing merge re-initiation or use of shadow data as truth until the next merge.
+
+## Transactional Consistency and MVCC Integration
+
+LM-DiskANN maintains DuckDB’s ACID properties and snapshot isolation by embedding MVCC metadata (like `commit_epoch`) in each `NodeBlock` and coordinating with DuckDB’s transaction manager. This ensures queries see a consistent index state per their transaction's snapshot, preventing phantom reads during concurrent modifications.
+
+**Commit Epochs and Visibility:** Each `NodeBlock`'s `commit_epoch` (a durable visibility marker from DuckDB) is compared against a query's snapshot epoch. Blocks with `commit_epoch` greater than the query's snapshot are ignored, preventing reads of "future" data. Uncommitted blocks lack a globally visible `commit_epoch` and are invisible to other transactions.
+
+**Transaction ID and Abort Handling:** Only data from committed transactions becomes durable. The flush logic writing to `lmd_delta_blocks` verifies transaction status with DuckDB; aborted transaction data is discarded, preventing "ghost" blocks. Recovery and startup checks reconcile `lmd_lookup` mappings with `NodeBlock` data, removing orphaned mappings from incomplete insertions to ensure consistency.
+
+**Tombstones and Snapshot Isolation:** Logical deletions are transactional. A deleted `node_id` is recorded in `lmd_tombstoned_nodes` with a `deletion_epoch`. Visibility depends on the query's snapshot epoch relative to this `deletion_epoch`: older snapshots see the node as live, newer ones see it as deleted. The `is_tombstone` flag in `NodeBlock`s and the `lmd_tombstoned_nodes` table ensure correct visibility across snapshots. Committed deletions are invisible to new queries.
+
+**Maintaining RowID Consistency:** To handle DuckDB `row_id` reuse, `lmd_lookup` mappings are transactional. Aborted transaction mappings are removed, allowing safe `row_id` reuse. If a reused `row_id` gets a new vector, its old node is already tombstoned; a new `NodeBlock` with a fresh `node_id` is created and mapped. Epoch checks prevent stale data from appearing.
+
+**Overall Index Consistency:** An index-wide epoch/version (e.g., `merge_sequence_number`) in `lmd_metadata` tracks significant committed changes like merges. On load, this is compared with DuckDB's catalog information. Mismatches can trigger validation, refresh, or mark the index unusable (requiring rebuild) to ensure full consistency or prevent use, avoiding erroneous results.
