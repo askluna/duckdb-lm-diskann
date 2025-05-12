@@ -261,9 +261,9 @@ Entries are the **latest committed versions** of `NodeBlock`s not yet merged int
 
 ## Transactional Consistency and MVCC Integration
 
-LM-DiskANN maintains DuckDB’s ACID properties and snapshot isolation by embedding MVCC metadata (like `commit_epoch`) in each `NodeBlock` and coordinating with DuckDB’s transaction manager. This ensures queries see a consistent index state per their transaction's snapshot, preventing phantom reads during concurrent modifications.
+LM-DiskANN maintains DuckDB’s ACID properties and snapshot isolation by embedding MVCC metadata (like `creation_epoch`) in each `NodeBlock` and coordinating with DuckDB’s transaction manager. This ensures queries see a consistent index state per their transaction's snapshot, preventing phantom reads during concurrent modifications.
 
-**Commit Epochs and Visibility:** Each `NodeBlock`'s `commit_epoch` (a durable visibility marker from DuckDB) is compared against a query's snapshot epoch. Blocks with `commit_epoch` greater than the query's snapshot are ignored, preventing reads of "future" data. Uncommitted blocks lack a globally visible `commit_epoch` and are invisible to other transactions.
+***\*Creation\** Epochs and Visibility:** Each `NodeBlock`'s `creation_epoch` (a durable visibility marker from DuckDB) is compared against a query's snapshot epoch. Blocks with `creation_epoch` greater than the query's snapshot are ignored, preventing reads of "future" data. Uncommitted blocks lack a globally visible `creation_epoch` and are invisible to other transactions.
 
 **Transaction ID and Abort Handling:** Only data from committed transactions becomes durable. The flush logic writing to `lmd_delta_blocks` verifies transaction status with DuckDB; aborted transaction data is discarded, preventing "ghost" blocks. Recovery and startup checks reconcile `lmd_lookup` mappings with `NodeBlock` data, removing orphaned mappings from incomplete insertions to ensure consistency.
 
