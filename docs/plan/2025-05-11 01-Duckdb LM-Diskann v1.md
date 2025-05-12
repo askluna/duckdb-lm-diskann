@@ -1,4 +1,4 @@
-# DuckdbLM-DiskANN Extension v1: Architecture and Design MVP
+# DuckdbLM-DiskANN Extension v1: Architecture and Design MVP (WIP)
 
 ## Background and Evolution from LM-DiskANN Paper to DuckDB Extension
 
@@ -65,39 +65,65 @@ This statement causes DuckDB to call into the extension’s index creation routi
 
 This directory contains the following components:
 
-- **Index Metadata file (`metadata.lmd`):** Stores global metadata such as vector dimension, graph parameters (e.g., max degree `R`, `alpha` for GSNG), distance metric, and the calculated `NodeBlock` size (e.g., 8192 bytes). These are typically fixed at index creation.
+- **Index Configuration file (`configuration.lmd`):** Stores global metadata such as vector dimension, graph parameters (e.g., max degree `R`, `alpha` for GSNG), distance metric, and the calculated `NodeBlock` size (e.g., 8192 bytes). These are typically fixed at index creation.
 
 - **Primary Graph Files (`graph.lmd`):** A binary file storing the ANN graph’s nodes in fixed-size `NodeBlock` units. Each `NodeBlock` holds one vector, its adjacency list (neighbor IDs and their compressed vectors), and associated metadata. While logically growing, this file can have blocks updated (via copy-on-write to a new location or the delta store, with the old block eventually freed) or internal free space reused, so it's not strictly append-only after initial build. This is the primary on-disk representation of the graph structure.
 
 - **Index Store Database (`diskann_store.duckdb`):** A DuckDB *secondary database* (with its own Write-Ahead Log - WAL) that maintains all auxiliary metadata for the LM-DiskANN index. Utilizing a DuckDB database file leverages its robust recovery mechanisms and transactional integrity for managing the index's evolving state. Key tables within this store include:
 
-  - **Shadow Delta Table (`lmd_delta_blocks`):** A WAL-backed table that records new or modified `NodeBlocks` as opaque blobs. These are changes (e.g., new nodes, updated neighbor lists from healing) that have been committed but not yet merged into the `graph.lmd` file. It serves as a durable journal of pending updates, ensuring that recent changes are queryable and recoverable.
+  - **RowID↔NodeID Mapping Table (`lmd_lookup`):** Maps each DuckDB base table `row_id` to its corresponding `node_id` in the ANN graph. 
 
-  - **RowID↔NodeID Mapping Table (`lmd_lookup`):** Maps each DuckDB base table `row_id` to its corresponding `node_id` in the ANN graph. This indirection is crucial for translating search results back to user-level tuples and for correctly handling scenarios where DuckDB might reuse `row_id`s after deletions.
+  - **Delta Operation Queue (`lmd_lookup`):** Queue to update nodes
+
+    - `row_id`
+
+    - `operation`: `create`,  `update`,  `delete`
+
+    - `value`
+
+  - **Delta blocks Table (`lmd_delta_blocks`):** A WAL-backed table that records new or modified `NodeBlocks` as opaque blobs. These are changes (e.g., new nodes, updated neighbor lists from healing) that have been committed but not yet merged into the `graph.lmd` file. It serves as a durable journal of pending updates, ensuring that recent changes are queryable and recoverable.
+  
+    - `node_id` - pk
+
+    - `node_block`
+
+    - `creation_epoch`
 
   - **Tombstone Nodes Table (`lmd_tombstoned_nodes`):** Tracks `node_id`s that have been logically deleted from the graph. Each entry typically includes the `node_id` and a deletion epoch/timestamp. Nodes in this table are ignored by searches (for transactions after the deletion epoch) and are candidates for eventual reclamation by the sweeper process.  The `NodeBlocks` themselves have tombstone flag.
 
-  - **Free Nodes Table (`lmd_free_nodes`):** Maintains a list of `node_id`s (and their corresponding block locations in `graph.lmd`) that have been fully processed after deletion and whose space is now available for reuse by new node insertions. This helps in managing disk space and mitigating fragmentation within `graph.lmd`.
-
   - **Sweep List (`lmd_sweep_list`):** A queue or list of `node_id`s that require processing by the background sweeper. Entries are added here to manage various stages of node lifecycle and maintenance:
-
+  
     - When a node is initially tombstoned, its `node_id` might be added to signal the sweeper to begin processing its deletion (which includes initiating edge healing for its neighbors and eventually reclaiming its block).
     - When a node's block is updated (e.g., due to an insertion, its own vector changing, or its neighbor list being modified by an edge healing operation) and the new version is in `lmd_delta_blocks`, its `node_id` is added to signal the sweeper to merge this updated block into `graph.lmd`.
     - May also track nodes identified for other maintenance, like block recompaction due to high internal fragmentation (many deleted neighbor entries).
-
-  - **Heal List (`lmd_heal_list`):** Tracks `node_id`s that have been identified by the sweeper or other maintenance processes as needing proactive graph connectivity adjustments or neighborhood optimization, not necessarily tied to an immediate deletion of one of their direct neighbors. This list supports tasks like:
-
     - Periodic graph quality checks where the sweeper identifies nodes whose neighborhoods have become suboptimal over time due to cumulative changes in the graph.
-
     - Rewiring or optimizing connections for nodes that might be critical for graph connectivity but whose current linkage could be improved based on broader graph heuristics.
-
+  
       This list is distinct from the immediate, reactive healing of a deleted node's direct neighbors (which is typically handled when the sweeper processes a tombstone from the `lmd_sweep_list`).
+  
+    - **Free Nodes Table (`lmd_free_nodes`):** Maintains a list of `node_id`s (and their corresponding block locations in `graph.lmd`) that have been fully processed after deletion and whose space is now available for reuse by new node insertions. This helps in managing disk space and mitigating fragmentation within `graph.lmd`.
+  
+  - **Index Metadata (`index_metadata`):** This table can track index metadata or statics that might be useful. The dataformat would be KV pairs.
 
 #### Advantages
 
 **Isolation and Maintainability:** By confining index data to a dedicated folder, the extension keeps failures localized. A crash or corruption in the index files does not affect the main DuckDB database. Backup and restore of an index is as simple as copying its folder, and dropping the index means deleting that folder. The main DuckDB database stores only a reference to the index location and perhaps minimal info (like the index name and config in the catalog), keeping the index largely decoupled.
 
 **High-Level Operation:** When the index is in use, queries first consult in-memory caches, then the `diskann_store.duckdb` tables, and finally `graph.lmd` on SSD, to retrieve NodeBlocks. Updates (inserts or deletes) are applied by writing new NodeBlocks to the shadow table (`__lmd_blocks`) within the store DB, under transaction protection. A background process later *merges* these changes into `graph.lmd` in bulk. This design provides **transactional semantics** (via the store DB’s WAL and DuckDB’s transactions) and **high I/O performance** by batching writes.
+
+### Transactional Consistency and MVCC Integration
+
+LM-DiskANN maintains DuckDB’s ACID properties and snapshot isolation by embedding MVCC metadata (like `creation_epoch`) in each `NodeBlock` and coordinating with DuckDB’s transaction manager. This ensures queries see a consistent index state per their transaction's snapshot, preventing phantom reads during concurrent modifications.
+
+***\*Creation\** Epochs and Visibility:** Each `NodeBlock`'s `creation_epoch` (a durable visibility marker from DuckDB) is compared against a query's snapshot epoch. Blocks with `creation_epoch` greater than the query's snapshot are ignored, preventing reads of "future" data. Uncommitted blocks lack a globally visible `creation_epoch` and are invisible to other transactions.
+
+**Transaction ID and Abort Handling:** Only data from committed transactions becomes durable. The flush logic writing to `lmd_delta_blocks` verifies transaction status with DuckDB; aborted transaction data is discarded, preventing "ghost" blocks. Recovery and startup checks reconcile `lmd_lookup` mappings with `NodeBlock` data, removing orphaned mappings from incomplete insertions to ensure consistency.
+
+**Tombstones and Snapshot Isolation:** Logical deletions are transactional. A deleted `node_id` is recorded in `lmd_tombstoned_nodes` with a `deletion_epoch`. Visibility depends on the query's snapshot epoch relative to this `deletion_epoch`: older snapshots see the node as live, newer ones see it as deleted. The `is_tombstone` flag in `NodeBlock`s and the `lmd_tombstoned_nodes` table ensure correct visibility across snapshots. Committed deletions are invisible to new queries.
+
+**Maintaining RowID Consistency:** To handle DuckDB `row_id` reuse, `lmd_lookup` mappings are transactional. Aborted transaction mappings are removed, allowing safe `row_id` reuse. If a reused `row_id` gets a new vector, its old node is already tombstoned; a new `NodeBlock` with a fresh `node_id` is created and mapped. Epoch checks prevent stale data from appearing.
+
+**Overall Index Consistency:** An index-wide epoch/version (e.g., `current_index_epoch`) in `lmd_metadata` tracks significant committed changes like merges. On load, this is compared with DuckDB's catalog information. Mismatches can trigger validation, refresh, or mark the index unusable (requiring rebuild) to ensure full consistency or prevent use, avoiding erroneous results.
 
 ## Node Block Layout and Graph Structure
 
@@ -172,8 +198,6 @@ Each block is a self-contained unit representing a graph node, its vector, its c
   4. **Safe Tombstone Processing & Space Reclamation**: The sweeper process uses `creation_epoch` values. A tombstoned node (marked with its deletion's `creation_epoch`) can be reclaimed only if its `creation_epoch` corresponds to a committed transaction and is older than the `start_timestamp` of any currently active reader transaction (e.g., older than `DuckTransactionManager::LowestActiveStart()`). The `DuckTransactionManager::LowestActiveStart()` method seems particularly relevant here.
   5. **Rollback Handling**: If a transaction writing new `NodeBlock` versions aborts, those blocks (identifiable by their `creation_epoch` which matches the aborted transaction's `start_timestamp`) are effectively ignored. They will not be merged from `lmd_delta_blocks`.
 
-
-
 ### Overflow Management [Not MVP]
 
 To maintain a strictly fixed `NodeBlock` size while accommodating nodes with a high number of incoming links (backlinks), an overflow mechanism is employed.  *This is only if needed.*
@@ -230,7 +254,7 @@ The primary graph is located in `graph.lmd` with the metadata in `metadata.lmd`.
 
 To efficiently manage dynamic updates and ensure data integrity with high performance, LM-DiskANN employs a **Shadow Delta + Merge** strategy. This log-structured approach minimizes write amplification and integrates with DuckDB’s transactions. Instead of costly in-place modifications to the primary graph file (`graph.lmd`), changes are first recorded in a WAL-protected secondary store. A background process then periodically merges these accumulated changes into `graph.lmd` in optimized batches.
 
-### Shadow Delta Table
+### Delta node Table
 
 **Shadow Delta Table (`lmd_delta_blocks`):** This table in `diskann_store.duckdb` is the initial persistence point for new or updated `NodeBlock`s, storing each as a BLOB keyed by its `block_id` (`node_id`). An illustrative schema is:
 
@@ -259,16 +283,17 @@ Entries are the **latest committed versions** of `NodeBlock`s not yet merged int
 
 **Durability and Recovery:** Modifications to `diskann_store.duckdb` tables (`lmd_delta_blocks`, `lmd_lookup`, etc.) are WAL-protected, providing standard DuckDB durability and atomicity. A committed vector insertion, for example, includes base table changes, `lmd_lookup` mapping, and `lmd_delta_blocks` data in the WAL. Crashes trigger WAL replay for `diskann_store.duckdb`, restoring consistency. The `graph.lmd` file is modified only by a crash-tolerant merge process (e.g., using temporary files and fsync before metadata updates). This two-tiered approach ensures that after recovery, shadow tables and metadata reflect committed but unmerged updates, allowing merge re-initiation or use of shadow data as truth until the next merge.
 
-## Transactional Consistency and MVCC Integration
 
-LM-DiskANN maintains DuckDB’s ACID properties and snapshot isolation by embedding MVCC metadata (like `creation_epoch`) in each `NodeBlock` and coordinating with DuckDB’s transaction manager. This ensures queries see a consistent index state per their transaction's snapshot, preventing phantom reads during concurrent modifications.
 
-***\*Creation\** Epochs and Visibility:** Each `NodeBlock`'s `creation_epoch` (a durable visibility marker from DuckDB) is compared against a query's snapshot epoch. Blocks with `creation_epoch` greater than the query's snapshot are ignored, preventing reads of "future" data. Uncommitted blocks lack a globally visible `creation_epoch` and are invisible to other transactions.
+## In-Memory Caching Notes [Not MVP]
 
-**Transaction ID and Abort Handling:** Only data from committed transactions becomes durable. The flush logic writing to `lmd_delta_blocks` verifies transaction status with DuckDB; aborted transaction data is discarded, preventing "ghost" blocks. Recovery and startup checks reconcile `lmd_lookup` mappings with `NodeBlock` data, removing orphaned mappings from incomplete insertions to ensure consistency.
+Though the index is disk-based, effective use of memory for caching is important for performance. The extension employs a two-level caching strategy and an asynchronous write buffer:
 
-**Tombstones and Snapshot Isolation:** Logical deletions are transactional. A deleted `node_id` is recorded in `lmd_tombstoned_nodes` with a `deletion_epoch`. Visibility depends on the query's snapshot epoch relative to this `deletion_epoch`: older snapshots see the node as live, newer ones see it as deleted. The `is_tombstone` flag in `NodeBlock`s and the `lmd_tombstoned_nodes` table ensure correct visibility across snapshots. Committed deletions are invisible to new queries.
+**LRU Node Cache:** An in-process Least-Recently-Used cache holds a limited number of NodeBlocks in deserialized form (objects in memory). The cache key is the `node_id` and the value is the `NodeBlock`,   structure (including vector and neighbors). This avoids repeated disk reads for “hot” nodes that are accessed frequently. The cache size is configurable (e.g., enough to hold the hottest few percent of nodes, or a certain MB limit). It uses an LRU eviction policy: when full, least-used entries are evicted *if they are clean*. A `nodeblock` with update operations is immediately evicted.
 
-**Maintaining RowID Consistency:** To handle DuckDB `row_id` reuse, `lmd_lookup` mappings are transactional. Aborted transaction mappings are removed, allowing safe `row_id` reuse. If a reused `row_id` gets a new vector, its old node is already tombstoned; a new `NodeBlock` with a fresh `node_id` is created and mapped. Epoch checks prevent stale data from appearing.
+>  **OS Page Cache / Buffer Manager:** For NodeBlocks not in the LRU cache, reads fall back to disk. The `graph.lmd` file is accessed via DuckDB’s `FileSystem` API. In either case, the operating system’s page cache will naturally buffer disk pages. Sequential reads during a merge or scan can warm the OS cache for subsequent random reads. 
 
-**Overall Index Consistency:** An index-wide epoch/version (e.g., `merge_sequence_number`) in `lmd_metadata` tracks significant committed changes like merges. On load, this is compared with DuckDB's catalog information. Mismatches can trigger validation, refresh, or mark the index unusable (requiring rebuild) to ensure full consistency or prevent use, avoiding erroneous results.
+>  We opted not to exclusively rely on DuckDB’s `BufferManager` for caching index pages, because earlier experiments showed that using DuckDB’s general-purpose buffer pool with a custom FixedSizeAllocator kept blocks pinned in memory, preventing proper eviction. Instead, by doing our own file I/O for the index, we let the OS manage caching and we retain fine-grained control via the LRU at the NodeBlock level. This approach ensures **bounded memory usage**: we do not pin the entire index in RAM, only a cache that can be tuned.
+
+
+
