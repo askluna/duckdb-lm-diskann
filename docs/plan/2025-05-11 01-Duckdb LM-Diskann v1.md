@@ -250,38 +250,67 @@ To maintain a strictly fixed `NodeBlock` size while accommodating nodes with a h
 
 ## Storage Strategy: Shadow Delta Tables, Merges, and State Management
 
-The primary graph is located in `graph.lmd` with the metadata in `metadata.lmd`.  All other components reside in the `diskann_store.duckdb` secondary database for each index:
+The primary graph is located in `graph.lmd` with its metadata in `metadata.lmd`. **All other mutable state** lives in the per‑index secondary database `diskann_store.duckdb`.
 
-To efficiently manage dynamic updates and ensure data integrity with high performance, LM-DiskANN employs a **Shadow Delta + Merge** strategy. This log-structured approach minimizes write amplification and integrates with DuckDB’s transactions. Instead of costly in-place modifications to the primary graph file (`graph.lmd`), changes are first recorded in a WAL-protected secondary store. A background process then periodically merges these accumulated changes into `graph.lmd` in optimized batches.
+To efficiently manage dynamic updates and maintain durability, LM‑DiskANN adopts a **Shadow Delta + Merge** strategy. Instead of performing in‑place edits to `graph.lmd`, every change is appended to a WAL‑protected shadow table. A background merger periodically folds those deltas into the on‑disk graph in large, cache‑optimised batches.
 
-### Delta node Table
+### Delta Tables
 
-**Shadow Delta Table (`lmd_delta_blocks`):** This table in `diskann_store.duckdb` is the initial persistence point for new or updated `NodeBlock`s, storing each as a BLOB keyed by its `block_id` (`node_id`). An illustrative schema is:
+**Delta Operations Table (**`**lmd_delta_operations**`**)**
+
 
 ```
-CREATE TABLE lmd_delta_blocks (
-    block_id      BIGINT PRIMARY KEY,    -- Corresponds to node_id, unique.
-    data          BLOB NOT NULL,         -- Serialized NodeBlock data (fixed size).
-    version       BIGINT NOT NULL,       -- Version number of this NodeBlock.
-    commit_epoch  BIGINT NOT NULL,       -- Commit epoch/timestamp of this block version.
-    is_tombstone  BOOLEAN NOT NULL,      -- Flag indicating if this block represents a deleted node.
-    checksum      BIGINT NOT NULL        -- Checksum for data integrity verification.
-) WITHOUT ROWID;
+CREATE TABLE lmd_delta_operations (
+    row_id       BIGINT NOT NULL,
+    operation    TEXT   NOT NULL, -- 'INSERT', 'UPDATE', 'DELETE'
+    data         BLOB   NULL, -- Serialized fixed‑size `NodeBlock` (may be empty for DELETE).
+    commit_epoch BIGINT NOT NULL -- milliseconds since epoch or increasing LSN
+);
 ```
 
-Entries are the **latest committed versions** of `NodeBlock`s not yet merged into `graph.lmd`, acting as an upsert journal. WAL protection for `diskann_store.duckdb` ensures durability. Queries check `lmd_delta_blocks` first for the newest `NodeBlock`, effectively overriding older versions in `graph.lmd`.
+🔎 **Fetching the latest version per row**
 
-### Lookup tables
+DuckDB’s `arg_max` aggregate gives an efficient single‑pass query:
 
-**RowID ↔ NodeID Mapping Table (`lmd_lookup`):** Located in `diskann_store.duckdb`, `lmd_lookup` maps base table `row_id`s to internal `node_id`s. Insertions add mappings, and deletions remove them, all transactionally and consistent with the base table. A secondary index on `node_id` aids reverse lookups. This leverages DuckDB's recovery; `NodeBlock`s also store their `row_id` for redundancy. This system, combined with commit epochs, correctly handles `row_id` reuse, preventing stale data.
+```
+SELECT
+    row_id,
+    arg_max(operation, commit_epoch) AS operation,
+    arg_max(data,      commit_epoch) AS data
+FROM lmd_delta_operations
+GROUP BY row_id;
+```
 
-### Maintenace tables
+This view yields the **current NodeBlock image** for every `row_id` and is what the query layer consults before falling back to `graph.lmd`.
 
-**Tombstoned Nodes Table (`lmd_tombstoned_nodes`):** Deleted vector `node_id`s are recorded in `lmd_tombstoned_nodes` (in `diskann_store.duckdb`) with a `deletion_epoch`, providing a reliable log of deletions. This table ensures searches skip deleted nodes (especially older `graph.lmd` versions without the flag) and helps the merge process identify garbage blocks for reclamation, adding their slots to the free list. The `deletion_epoch` can track commit times for potential advanced features.
+#### Create Operations
 
-**Free List Management and Space Reuse (`lmd_free_nodes`):** Vacant `NodeBlock` slots in `graph.lmd` from deletions are managed by a free list (e.g., `lmd_free_nodes` table or tracked in `lmd_metadata`). During merges, slots of tombstoned nodes are added to this list. New `NodeBlock`s reuse these free slots before appending, mitigating fragmentation and controlling file size. The strategy is conservative: existing blocks are not moved to fill internal holes (compaction is deferred), but tail trimming of `graph.lmd` is possible if trailing blocks are free. Periodic merges ensure efficient space reuse.
+`INSERT` events are appended to `lmd_delta_operations` as fast as possible (append only). The low‑priority merger eventually allocates a fresh slot (or reuses a free one) in `graph.lmd`.
 
-**Durability and Recovery:** Modifications to `diskann_store.duckdb` tables (`lmd_delta_blocks`, `lmd_lookup`, etc.) are WAL-protected, providing standard DuckDB durability and atomicity. A committed vector insertion, for example, includes base table changes, `lmd_lookup` mapping, and `lmd_delta_blocks` data in the WAL. Crashes trigger WAL replay for `diskann_store.duckdb`, restoring consistency. The `graph.lmd` file is modified only by a crash-tolerant merge process (e.g., using temporary files and fsync before metadata updates). This two-tiered approach ensures that after recovery, shadow tables and metadata reflect committed but unmerged updates, allowing merge re-initiation or use of shadow data as truth until the next merge.
+#### Update or Delete Operations
+
+`UPDATE`/`DELETE` events are considered **latency‑sensitive** because they affect existing search results. A *higher‑priority* background worker continuously scans new fragments of `lmd_delta_operations` and:
+
+1. For `UPDATE` – rewrites the on‑disk NodeBlock at its physical offset (or allocates a new slot if size changed) and enqueues the `node_id` on `lmd_sweep_list`.
+2. For `DELETE` – flips the tombstone bit in the block header (in‑place when possible), records the `node_id` in `lmd_tombstoned_nodes`, and pushes it to `lmd_sweep_list` for later free‑list reclamation.
+
+This ensures logical visibility (deleted nodes disappear, updated vectors appear) well before the large merge cycles run.
+
+### Lookup Tables
+
+**RowID ↔ NodeID Mapping (**`**lmd_lookup**`**)**
+
+Unchanged from the prior design: maintains bidirectional mapping, transactionally consistent with base table and the delta log.
+
+### Maintenance Tables
+
+- `**lmd_tombstoned_nodes**` – records deletions with `deletion_epoch`; guards queries from stale graph pages.
+- `**lmd_free_nodes**` – central free‑list for recycling physical slots inside `graph.lmd`.
+- `**lmd_sweep_list**` – work queue for the sweeper that actually frees pages and compacts tails.
+
+### Durability & Recovery
+
+All inserts into `lmd_delta_operations` are protected by DuckDB’s WAL. On startup, recovery replays the log, guaranteeing that no committed delta is lost. Because `graph.lmd` is only ever modified by background tasks that use *write‑ahead temp files* + `fsync`, the system can always fall back to the delta log as the source of truth and resume a failed merge without corruption.
 
 
 
