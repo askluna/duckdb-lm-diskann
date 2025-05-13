@@ -10,7 +10,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if (NOT MSVC)
     add_compile_options(-Wno-deprecated-literal-operator)
 endif()
-
 # Set extension name here
 set(TARGET_NAME lm_diskann)
 
@@ -18,6 +17,15 @@ set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
 project(${TARGET_NAME})
+
+# # Enable modules
+# set(CMAKE_CXX_SCAN_FOR_MODULES ON) # add this line
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fmodules")
+# if (CMAKE_COMPILER_IS_GNUCXX)
+#     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20")
+# elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+#     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20") # If using libc++
+# endif()
 
 # -- vcpkg packages --
 # For SimSIMD (header-only via vcpkg)
@@ -109,5 +117,13 @@ install(
   LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
   ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
 
+# # --- Declare C++ Module Files ---
+# if(LM_DISKANN_MODULE_ABSOLUTE_SOURCES)
+#     target_sources(${EXTENSION_NAME} PRIVATE
+#         FILE_SET CXX_MODULES FILES ${LM_DISKANN_MODULE_ABSOLUTE_SOURCES}
+#     )
+# endif()
+
+# # --- End Declare C++ Module Files ---
 
 message(STATUS "Current CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
