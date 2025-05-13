@@ -31,7 +31,7 @@ using IndexPointer = ::duckdb::IndexPointer;
 using block_id_t = ::duckdb::block_id_t;
 
 // Constant for an invalid block ID, aliasing DuckDB's constant.
-const block_id_t INVALID_BLOCK_ID = ::duckdb::DConstants::INVALID_INDEX;
+const block_id_t INVALID_BLOCK_ID = static_cast<block_id_t>(::duckdb::DConstants::INVALID_INDEX);
 
 // duckdb::data_ptr_t and const_data_ptr_t are aliases for unsigned char*
 using data_ptr_t = ::duckdb::data_ptr_t;

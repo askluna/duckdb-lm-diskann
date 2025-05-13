@@ -39,15 +39,15 @@ Coordinator::Coordinator(std::unique_ptr<IStorageManager> storage_manager, std::
 	graph_entry_point_ptr_ = common::IndexPointer(); // Initialize to invalid state
 	delete_queue_head_ptr_ = common::IndexPointer(); // Initialize to invalid state
 
-	std::cout << "Coordinator: Initialized." << std::endl;
+	std::cout << "Coordinator: Initialized." << "\n";
 }
 
 Coordinator::~Coordinator() {
-	std::cout << "Coordinator: Destroyed." << std::endl;
+	std::cout << "Coordinator: Destroyed." << "\n";
 }
 
 void Coordinator::BuildIndex(const std::string &data_path /*, other params */) {
-	std::cout << "Coordinator: BuildIndex called with data_path: " << data_path << std::endl;
+	std::cout << "Coordinator: BuildIndex called with data_path: " << data_path << "\n";
 	// 1. Initialize IndexConfig if not already done.
 	// 2. Use StorageManager to prepare storage for the new index.
 	// 3. Use GraphManager to build the graph from data (potentially read via
@@ -62,7 +62,7 @@ void Coordinator::BuildIndex(const std::string &data_path /*, other params */) {
 
 void Coordinator::Search(const float *query_vector, common::idx_t k_neighbors,
                          std::vector<common::row_t> &result_row_ids, common::idx_t search_list_size) {
-	// std::cout << "Coordinator: Search called." << std::endl;
+	// std::cout << "Coordinator: Search called." << "\n";
 	if (!index_loaded_) {
 		throw std::runtime_error("Coordinator: Error - Index not loaded for search.");
 	}
@@ -80,7 +80,7 @@ void Coordinator::Search(const float *query_vector, common::idx_t k_neighbors,
 	common::idx_t L_search = (search_list_size > 0) ? search_list_size : config_.l_search;
 	if (L_search < k_neighbors) {
 		// Warn or adjust? L_search (" << L_search << ") < k (" <<
-		// k_neighbors << ")" << std::endl;
+		// k_neighbors << ")" << "\n";
 		L_search = k_neighbors;
 	}
 
@@ -95,14 +95,14 @@ void Coordinator::Search(const float *query_vector, common::idx_t k_neighbors,
 		// handles it.
 
 	} catch (const std::exception &e) {
-		std::cerr << "Coordinator: Error during Search: " << e.what() << std::endl;
+		std::cerr << "Coordinator: Error during Search: " << e.what() << "\n";
 		result_row_ids.clear(); // Ensure empty results on error
 		throw;                  // Re-throw
 	}
 }
 
 void Coordinator::Insert(const float *data_vector, size_t data_dim, common::row_t label) {
-	std::cout << "Coordinator: Insert called for label: " << label << std::endl;
+	std::cout << "Coordinator: Insert called for label: " << label << "\n";
 	if (!index_loaded_) {
 		throw std::runtime_error("Coordinator: Error - Index not loaded for insert.");
 	}
@@ -160,7 +160,7 @@ void Coordinator::Insert(const float *data_vector, size_t data_dim, common::row_
 		SetDirty(true);
 
 	} catch (const std::exception &e) {
-		std::cerr << "Coordinator: Error during Insert for label " << label << ": " << e.what() << std::endl;
+		std::cerr << "Coordinator: Error during Insert for label " << label << ": " << e.what() << "\n";
 		// Rollback? If AddNode succeeded but subsequent steps failed, need cleanup.
 		if (node_added) {
 			try {
@@ -174,13 +174,12 @@ void Coordinator::Insert(const float *data_vector, size_t data_dim, common::row_
 }
 
 void Coordinator::Delete(common::row_t label) {
-	std::cout << "Coordinator: Delete called for label: " << label << std::endl;
+	std::cout << "Coordinator: Delete called for label: " << label << "\n";
 	if (!index_loaded_) {
-		std::cerr << "Coordinator: Error - Index not loaded for delete." << std::endl;
+		std::cerr << "Coordinator: Error - Index not loaded for delete." << "\n";
 		return;
 	}
 
-	bool success = true;
 	try {
 		// 1. Log to shadow store (if available)
 		if (shadow_storage_service_) {
@@ -216,17 +215,18 @@ void Coordinator::Delete(common::row_t label) {
 
 	} catch (const std::exception &e) {
 		// TODO: Proper error handling/logging. Maybe rollback shadow log?
-		std::cerr << "Coordinator: Error during Delete for label " << label << ": " << e.what() << std::endl;
-		success = false;
+		std::cerr << "Coordinator: Error during Delete for label " << label << ": " << e.what() << "\n";
 		// Re-throw or handle error appropriately
 		throw; // Re-throwing for now
 	}
 }
 
 void Coordinator::Update(common::row_t label, const float *new_data_vector, size_t data_dim) {
-	std::cout << "Coordinator: Update called for label: " << label << std::endl;
+	(void)new_data_vector; // Marked as unused
+	(void)data_dim;        // Marked as unused
+	std::cout << "Coordinator: Update called for label: " << label << "\n";
 	if (!index_loaded_) {
-		std::cerr << "Coordinator: Error - Index not loaded for update." << std::endl;
+		std::cerr << "Coordinator: Error - Index not loaded for update." << "\n";
 		return;
 	}
 	// This is often implemented as a delete then insert.
@@ -237,7 +237,7 @@ void Coordinator::Update(common::row_t label, const float *new_data_vector, size
 }
 
 void Coordinator::LoadIndex(const std::string &index_path) {
-	std::cout << "Coordinator: LoadIndex called for path: " << index_path << std::endl;
+	std::cout << "Coordinator: LoadIndex called for path: " << index_path << "\n";
 	// 1. Use StorageManager to load the graph data (`graph.lmd`) and metadata
 	// from disk.
 	// 2. Populate GraphManager with the loaded graph structure.
@@ -267,13 +267,13 @@ void Coordinator::LoadIndex(const std::string &index_path) {
 	this->is_dirty_ = false;                         // Crucial: A freshly loaded index is not dirty
 	graph_entry_point_ptr_ = common::IndexPointer(); // Assuming LoadIndexContents might not set if empty
 	delete_queue_head_ptr_ = common::IndexPointer(); // Assuming LoadIndexContents might not set if empty
-	std::cout << "Coordinator: Index loaded successfully from " << index_path << std::endl;
+	std::cout << "Coordinator: Index loaded successfully from " << index_path << "\n";
 }
 
 void Coordinator::SaveIndex(const std::string &index_path) {
-	std::cout << "Coordinator: SaveIndex called for path: " << index_path << std::endl;
+	std::cout << "Coordinator: SaveIndex called for path: " << index_path << "\n";
 	if (!index_loaded_) {
-		std::cerr << "Coordinator: Error - No index loaded to save." << std::endl;
+		std::cerr << "Coordinator: Error - No index loaded to save." << "\n";
 		return;
 	}
 	// 1. Use StorageManager to save the current graph and metadata to disk.
@@ -282,7 +282,7 @@ void Coordinator::SaveIndex(const std::string &index_path) {
 }
 
 void Coordinator::InitializeIndex(::diskann::common::idx_t estimated_cardinality) {
-	std::cout << "Coordinator: InitializeIndex called with estimated_cardinality: " << estimated_cardinality << std::endl;
+	std::cout << "Coordinator: InitializeIndex called with estimated_cardinality: " << estimated_cardinality << "\n";
 	if (!storage_manager_ || !graph_manager_) {
 		throw std::runtime_error("Coordinator: Managers not initialized for InitializeIndex.");
 	}
@@ -313,11 +313,11 @@ void Coordinator::InitializeIndex(::diskann::common::idx_t estimated_cardinality
 	graph_entry_point_rowid_ = common::NumericLimits<common::row_t>::Maximum(); // Use
 	                                                                            // common::NumericLimits
 	delete_queue_head_ptr_ = common::IndexPointer();
-	std::cout << "Coordinator: New index initialized." << std::endl;
+	std::cout << "Coordinator: New index initialized." << "\n";
 }
 
 void Coordinator::HandleCommitDrop() {
-	std::cout << "Coordinator: HandleCommitDrop called." << std::endl;
+	std::cout << "Coordinator: HandleCommitDrop called." << "\n";
 	// Instruct managers to clean up their state related to this index instance
 	if (graph_manager_) {
 		graph_manager_->Reset();
@@ -351,7 +351,7 @@ void Coordinator::HandleCommitDrop() {
 }
 
 void Coordinator::PerformVacuum() {
-	std::cout << "Coordinator: PerformVacuum called." << std::endl;
+	std::cout << "Coordinator: PerformVacuum called." << "\n";
 	if (!storage_manager_) {
 		throw std::runtime_error("StorageManager not initialized in Coordinator::PerformVacuum");
 	}
@@ -361,7 +361,7 @@ void Coordinator::PerformVacuum() {
 		// After processing, the index state might have changed significantly
 		SetDirty(true); // Mark as dirty if vacuum modifies state that needs saving
 	} catch (const std::exception &e) {
-		std::cerr << "Coordinator: Error during PerformVacuum: " << e.what() << std::endl;
+		std::cerr << "Coordinator: Error during PerformVacuum: " << e.what() << "\n";
 		// Handle or re-throw
 		throw;
 	}

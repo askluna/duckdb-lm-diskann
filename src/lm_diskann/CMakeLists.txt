@@ -5,10 +5,11 @@ file(GLOB LM_DISKANN_CORE_SRCS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "core/*.cp
 file(GLOB LM_DISKANN_DB_SRCS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "db/*.cpp")
 file(GLOB LM_DISKANN_STORE_SRCS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "store/*.cpp")
 file(GLOB LM_DISKANN_QUANTIZATION_SRCS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "quantization/*.cpp")
+file(GLOB LM_DISKANN_SCHEDULER_SRCS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "scheduler/*.cpp")
+
 
 set(LM_DISKANN_ABSOLUTE_SOURCES "")
-
-# Make paths absolute by prepending CMAKE_CURRENT_SOURCE_DIR (path to src/lm_diskann)
+# Make paths absolute for regular .cpp sources
 foreach(FILE ${LM_DISKANN_COMMON_SRCS})
     list(APPEND LM_DISKANN_ABSOLUTE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${FILE}")
 endforeach()
@@ -24,6 +25,22 @@ endforeach()
 foreach(FILE ${LM_DISKANN_QUANTIZATION_SRCS})
     list(APPEND LM_DISKANN_ABSOLUTE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${FILE}")
 endforeach()
+foreach(FILE ${LM_DISKANN_SCHEDULER_SRCS})
+    list(APPEND LM_DISKANN_ABSOLUTE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${FILE}")
+endforeach()
+
+# # --- Find C++ Module Files --- 
+# # Find all .cppm files recursively within this directory (src/lm_diskann)
+# file(GLOB_RECURSE LM_DISKANN_MODULE_RELATIVE_SOURCES
+#     RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+#     "${CMAKE_CURRENT_SOURCE_DIR}/*.cppm"
+# )
+
+set(LM_DISKANN_MODULE_ABSOLUTE_SOURCES "")
+foreach(FILE ${LM_DISKANN_MODULE_RELATIVE_SOURCES})
+    list(APPEND LM_DISKANN_MODULE_ABSOLUTE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${FILE}")
+endforeach()
+
 
 # Append these absolute source paths to the EXTENSION_SOURCES variable from the parent scope
 # This ensures that the main CMakeLists.txt, when it calls build_static_extension
@@ -33,3 +50,9 @@ set(EXTENSION_SOURCES
     ${LM_DISKANN_ABSOLUTE_SOURCES} # Add the absolute paths to sources found in this directory
     PARENT_SCOPE
 )
+
+# # Pass the list of absolute module source paths to the parent scope
+# set(LM_DISKANN_MODULE_ABSOLUTE_SOURCES
+#     ${LM_DISKANN_MODULE_ABSOLUTE_SOURCES}
+#     PARENT_SCOPE
+# )

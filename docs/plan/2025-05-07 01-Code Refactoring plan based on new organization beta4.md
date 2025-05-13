@@ -1,9 +1,8 @@
-```
-# DiskANN DuckDB Extension: V1 Refactoring Plan (HPP/CPP)
+# DiskANN DuckDB Extension: beta1 Refactoring Plan (HPP/CPP)
 
 ## 1. Introduction
 
-This document outlines the plan to refactor the `LmDiskannIndex` component of the DiskANN DuckDB extension. The primary goals for this V1 refactoring are:
+This document outlines the plan to refactor the `LmDiskannIndex` component of the DiskANN DuckDB extension. The primary goals for this beta1 refactoring are:
 
 * **Decompose `LmDiskannIndex`**: Break down its monolithic structure into smaller, more focused classes.
 * **Traditional C++ Structure**: Implement these changes using `.hpp` header files and `.cpp` source files, deferring the C++20 modules approach.
@@ -163,7 +162,7 @@ The dependency flow will be:
 #### a. `diskann::common::IndexConfig`
 * **Files**: `diskann/common/IndexConfig.hpp`, `diskann/common/IndexConfig.cpp` (Refactors existing `index_config.hpp/.cpp`)
 * **Responsibility**: Holds configuration parameters (parsed from `WITH` options and derived from column types). Includes `LmDiskannConfig`, `NodeLayoutOffsets`, enums, constants, validation, and layout calculation logic.
-* **Note**: The spec places `IndexConfig.cppm` in `diskann.core`. Moving to `common` might be better if it's truly shared widely without core logic. For V1, keeping it in `core` as `diskann::core::IndexConfig` is also fine if it's primarily used by core components. Let's assume `diskann::core::IndexConfig` for now, consistent with user's current structure.
+* **Note**: The spec places `IndexConfig.cppm` in `diskann.core`. Moving to `common` might be better if it's truly shared widely without core logic. For beta1, keeping it in `core` as `diskann::core::IndexConfig` is also fine if it's primarily used by core components. Let's assume `diskann::core::IndexConfig` for now, consistent with user's current structure.
 
 #### b. `diskann::common::Distance` (or `diskann::core::Distance` and an `IDistanceFunctions` interface)
 * **Files**: `diskann/common/distance.hpp`, `diskann/common/distance.cpp` (Refactors existing `distance.hpp/.cpp`)
@@ -334,7 +333,7 @@ src/
 5.  **Update CMakeLists.txt**: Ensure all new `.cpp` files are compiled and linked correctly.
 6.  **Testing**: Thorough unit and integration testing will be crucial at each step.
 
-This plan provides a roadmap for the V1 refactoring. The key is a disciplined approach to separating concerns and managing dependencies through interfaces.
-```
+This plan provides a roadmap for the beta1 refactoring. The key is a disciplined approach to separating concerns and managing dependencies through interfaces.
+
 
 This plan should guide the initial refactoring. Remember that this is an iterative process, and some details might be refined as you delve into the implementation. The focus on using interfaces from the start, even with traditional hpp/cpp files, will make a future transition to C++20 modules much smoother.

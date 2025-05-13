@@ -7,4 +7,8 @@ duckdb_extension_load(lm_diskann
         )
 
 # Any extra extensions that should be built
-# e.g.: duckdb_extension_load(json)
+duckdb_extension_load(fts
+    (DONT_LINK)
+    GIT_URL https://github.com/duckdb/duckdb-fts
+    GIT_TAG main
+)

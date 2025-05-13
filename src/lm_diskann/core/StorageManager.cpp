@@ -29,16 +29,18 @@ StorageManager::StorageManager(const LmDiskannConfig &config, const NodeLayoutOf
 	if (!primary_storage_service_) {
 		throw common::InternalException("StorageManager: IPrimaryStorageService pointer cannot be null.");
 	}
-	std::cout << "StorageManager: Constructed with services." << std::endl;
+	std::cout << "StorageManager: Constructed with services." << "\n";
 }
 
 StorageManager::~StorageManager() {
-	std::cout << "StorageManager: Destructed." << std::endl;
+	std::cout << "StorageManager: Destructed." << "\n";
 }
 
 // --- Private Helper Methods Implementation (Derived from old global functions) ---
 
 bool StorageManager::TryGetNodePointerFromShadow(common::row_t row_id, common::IndexPointer &node_ptr) {
+	(void)row_id;
+	(void)node_ptr;
 	// Original global function was: bool TryGetNodePointer(::duckdb::row_t row_id, ::duckdb::IndexPointer &node_ptr,
 	// ::duckdb::AttachedDatabase &db)
 	// FIXME: Implement RowID map lookup (e.g., using ART) via shadow_storage_service_
@@ -54,6 +56,7 @@ bool StorageManager::TryGetNodePointerFromShadow(common::row_t row_id, common::I
 }
 
 common::IndexPointer StorageManager::AllocateAndMapNodeInShadowStore(common::row_t row_id) {
+	(void)row_id;
 	// Original global function was: ::duckdb::IndexPointer AllocateNode(::duckdb::row_t row_id,
 	// ::duckdb::AttachedDatabase &db, ::duckdb::FixedSizeAllocator &allocator)
 	// FIXME: Implement RowID map insertion via shadow_storage_service_
@@ -71,6 +74,7 @@ common::IndexPointer StorageManager::AllocateAndMapNodeInShadowStore(common::row
 }
 
 void StorageManager::DeleteNodeFromShadowStoreAndFreeBlock(common::row_t row_id) {
+	(void)row_id;
 	// Original global function was: void DeleteNodeFromMapAndFreeBlock(::duckdb::row_t row_id, ::duckdb::AttachedDatabase
 	// &db, ::duckdb::FixedSizeAllocator &allocator)
 	// FIXME: Implement RowID map deletion via shadow_storage_service_
@@ -87,6 +91,7 @@ void StorageManager::DeleteNodeFromShadowStoreAndFreeBlock(common::row_t row_id)
 }
 
 void StorageManager::PersistLmDiskannMetadata(const LmDiskannMetadata &metadata) {
+	(void)metadata;
 	// Original global function was: void PersistMetadata(common::IndexPointer metadata_ptr, ::duckdb::AttachedDatabase
 	// &db, ::duckdb::FixedSizeAllocator &allocator, const LmDiskannMetadata &metadata) V2 NOTE: This function will
 	// change. Metadata is managed by IShadowStorageService in diskann_store.duckdb. StorageManager::SaveIndexContents
@@ -121,6 +126,7 @@ void StorageManager::PersistLmDiskannMetadata(const LmDiskannMetadata &metadata)
 }
 
 void StorageManager::LoadLmDiskannMetadata(LmDiskannMetadata &metadata_out) {
+	(void)metadata_out;
 	// Original global function was: void LoadMetadata(common::IndexPointer metadata_ptr, ::duckdb::AttachedDatabase &db,
 	// ::duckdb::FixedSizeAllocator &allocator, LmDiskannMetadata &metadata_out) V2 NOTE: This function will change.
 	// Metadata is loaded by IShadowStorageService from diskann_store.duckdb.
@@ -160,7 +166,7 @@ common::row_t StorageManager::GetConsistentEntryPointRowId(common::IndexPointer 
 	if (graph_entry_point_ptr.Get() != 0) {
 		std::cerr << "Warning: GetConsistentEntryPointRowId: Cannot get row_id from pointer yet (V2 requires reading block "
 		             "header via IFileSystemService or using IShadowStorageService)."
-		          << std::endl;
+		          << "\n";
 		// Original logic from global GetEntryPointRowId might have had more here, or assumed an early return.
 		// For V2, resolving graph_entry_point_ptr to a row_id will likely involve shadow_storage_service_
 		// or reading a block header via file_system_service_.
@@ -188,6 +194,12 @@ void StorageManager::LoadIndexContents(const std::string &index_path, LmDiskannC
                                        IGraphManager *graph_manager_out, common::IndexPointer &entry_point_ptr_out,
                                        common::row_t &entry_point_rowid_out,
                                        common::IndexPointer &delete_queue_head_out) {
+	(void)index_path;
+	(void)config_out;
+	(void)graph_manager_out;
+	(void)entry_point_ptr_out;
+	(void)entry_point_rowid_out;
+	(void)delete_queue_head_out;
 	// V2 Notes from old LoadMetadata & GetEntryPointRowId have been moved to helper methods.
 	// This method will orchestrate calls to helper methods like LoadLmDiskannMetadata,
 	// GetConsistentEntryPointRowId, and interact with IFileSystemService and IGraphManager.
@@ -204,6 +216,8 @@ void StorageManager::LoadIndexContents(const std::string &index_path, LmDiskannC
 }
 
 void StorageManager::InitializeNewStorage(const std::string &index_path, const LmDiskannConfig &config) {
+	(void)index_path;
+	(void)config;
 	// This method will orchestrate calls to PersistLmDiskannMetadata (for initial config)
 	// and interact with IFileSystemService to set up graph.lmd and IShadowStorageService for its setup.
 	// Conceptual calls:

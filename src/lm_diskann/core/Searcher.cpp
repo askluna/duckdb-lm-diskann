@@ -249,7 +249,7 @@ void PerformSearch(const float *query_vector_ptr, common::idx_t k_neighbors, com
 Searcher::Searcher(IStorageManager *storage_manager) : storage_manager_(storage_manager) {
 	if (!storage_manager_) {
 		// Or throw an exception, depending on desired strictness
-		std::cerr << "Warning: Searcher initialized with null IStorageManager." << std::endl;
+		std::cerr << "Warning: Searcher initialized with null IStorageManager." << "\n";
 	}
 }
 

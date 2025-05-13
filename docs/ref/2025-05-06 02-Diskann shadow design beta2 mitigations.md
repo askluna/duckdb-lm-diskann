@@ -1,4 +1,4 @@
-# LM-DiskANN Shadow Architecture – Implementation & Mitigation Specification
+# LM-DiskANN Shadow Architecture beta2– Implementation & Mitigation Specification
 
 ## Shadow System Design Overview
 

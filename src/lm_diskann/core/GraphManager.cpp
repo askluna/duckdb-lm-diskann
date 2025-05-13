@@ -352,7 +352,7 @@ void GraphManager::RobustPrune(common::IndexPointer node_to_connect_ptr, const f
 			    this->CalculateDistanceInternal(p_float_vector.data(), r_float_vector_ptr, config_param.dimensions);
 
 			// Get distance from node_to_connect to selected neighbor r (should be stored)
-			float dist_node_r = selected_neighbor_distances[r_rowid]; // Use map lookup
+			// float dist_node_r = selected_neighbor_distances[r_rowid]; // Use map lookup // Commented out: unused variable
 
 			// Vamana pruning condition: Check if r makes p redundant relative to node_to_connect
 			// If alpha * dist(p, r) < dist(node_to_connect, p)
@@ -387,8 +387,7 @@ void GraphManager::RobustPrune(common::IndexPointer node_to_connect_ptr, const f
 	if (!node_to_connect_mutable_data) {
 		// Cannot update the node if we can't get mutable data
 		// Maybe throw an error or log? This indicates a problem.
-		std::cerr << "Warning: RobustPrune could not get mutable block data for node " << node_to_connect_ptr.Get()
-		          << std::endl;
+		std::cerr << "Warning: RobustPrune could not get mutable block data for node " << node_to_connect_ptr.Get() << "\n";
 		return;
 	}
 
@@ -540,7 +539,7 @@ common::row_t GraphManager::GetRandomNodeID(common::RandomEngine &engine) {
 	}
 	// Use NextRandom to get a double in [0,1), then scale and cast.
 	// This ensures a value in [0, map_size_val - 1].
-	common::idx_t random_idx = static_cast<common::idx_t>(engine.NextRandom() * map_size_val);
+	common::idx_t random_idx = static_cast<common::idx_t>(engine.NextRandom() * static_cast<double>(map_size_val));
 	// Defensive check for the case where NextRandom() is 1.0 (should be < 1.0)
 	if (random_idx >= map_size_val) {
 		random_idx = map_size_val - 1;
@@ -562,7 +561,7 @@ common::row_t GraphManager::GetRandomNodeID(common::RandomEngine &engine) {
  * @return A valid row_t to be used as a search entry point, or NumericLimits<row_t>::Maximum() if no nodes exist.
  */
 common::row_t GraphManager::SelectEntryPointForSearch(common::RandomEngine &engine) {
-	bool entry_point_updated = false;
+	[[maybe_unused]] bool entry_point_updated = false;
 	if (graph_entry_point_rowid_ != common::NumericLimits<common::row_t>::Maximum()) {
 		common::IndexPointer ptr_check;
 		// Verify current entry point is still valid in the node manager's map

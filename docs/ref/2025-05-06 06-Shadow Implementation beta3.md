@@ -1,10 +1,10 @@
-# LM-DiskANN DuckDB Extension - Phased Implementation Plan (MVP Structure)
+# LM-DiskANN DuckDB Extension beta2 - Phased Implementation Plan (MVP Structure) beta3
 
 ## I. Project Objective and Adopted Architectural Framework
 
 **Project Objective:** The principal objective of this undertaking is the systematic development and implementation of LM-DiskANN as a robust, disk-native Approximate Nearest Neighbor (ANN) indexing extension tailored for the DuckDB database management system. This extension is engineered to facilitate high-performance similarity searches across extensive vector datasets, particularly those whose storage footprints may considerably surpass available system random-access memory (RAM). Design considerations of paramount importance include the provision of comprehensive support for dynamic data modifications—encompassing insertions, deletions, and updates—alongside the meticulous preservation of transactional consistency with the primary DuckDB database. Such consistency ensures that query results derived from the index accurately reflect the visibility rules pertinent to concurrent transactional operations. The designation "robust" signifies inherent resilience against system failures, encompassing predictable recovery behavior and a steadfast commitment to data integrity, thereby minimizing the risk of data loss or corruption. Concurrently, "disk-native" underscores the architectural tenet that the principal data repository resides on persistent disk storage, with RAM being strategically employed for caching mechanisms, active computational processes, and managing intermediate state, rather than for accommodating the entirety of the index structure, which could span terabytes.
 
-**Adopted Architectural Framework: "Shadow Architecture V2"**
+**Adopted Architectural Framework: "Shadow Architecture beta2"**
 
 The project will realize a sophisticated shadow architecture, wherein each LM-DiskANN index instance is encapsulated within its own dedicated directory structure. This architectural paradigm promotes enhanced modularity, simplifies the complexities associated with index lifecycle management (creation, backup, drop), and isolates the operational concerns of individual indexes. The key constituent components of this framework are delineated as follows:
 
@@ -34,9 +34,9 @@ The development of this project will be executed iteratively, progressing throug
 1. **Basic Directory and File Management System:**
    - Implementation of procedures for the creation of the index-specific directory structure (e.g., `database_name.lmd_idx/index_name/`). This includes robust path handling and error checking for filesystem operations.
    - Initialization of an empty `graph.lmd` file. This involves writing a requisite header structure containing a magic number for file type identification, a format version indicator (to support future layout changes), and static configuration parameters such as vector dimensionality, chosen distance metric, and configured block size.
-   - Initialization of the `diskann_store.duckdb` database. This entails programmatically creating the embedded database file and executing Data Definition Language (DDL) statements to define the schemas for the `lmd_lookup` and `index_metadata` tables, as referenced in the "Shadow Architecture V2," Section I.3.
+   - Initialization of the `diskann_store.duckdb` database. This entails programmatically creating the embedded database file and executing Data Definition Language (DDL) statements to define the schemas for the `lmd_lookup` and `index_metadata` tables, as referenced in the "Shadow Architecture beta2," Section I.3.
 2. **`NodeBlock` Definition and Serialization Mechanisms:**
-   - Definition of the C++ `struct NodeBlock` in strict accordance with Section I.4 of the "Shadow Architecture V2" specification. Internal helper structures related to `NodeBlock` (e.g., for neighbor entries) will adhere to C++ guidelines, such as the principle of parameter grouping for constructors or methods that would otherwise possess an excess of three parameters, promoting clarity and maintainability.
+   - Definition of the C++ `struct NodeBlock` in strict accordance with Section I.4 of the "Shadow Architecture beta2" specification. Internal helper structures related to `NodeBlock` (e.g., for neighbor entries) will adhere to C++ guidelines, such as the principle of parameter grouping for constructors or methods that would otherwise possess an excess of three parameters, promoting clarity and maintainability.
    - Implementation of rudimentary serialization routines for converting in-memory `NodeBlock` instances to `char*` buffers suitable for disk persistence. Corresponding deserialization routines for reconstructing `NodeBlock` instances from such buffers will also be developed. These routines must handle byte ordering consistently if cross-platform compatibility is a concern, although DuckDB's primary environments are typically little-endian.
    - Implementation of checksum calculation algorithms (e.g., CRC32 or xxHash) and associated verification mechanisms to ensure the integrity of `NodeBlock` data against corruption during storage or transmission.
 3. **`IndexStoreManager` (Rudimentary Implementation):**
@@ -104,10 +104,10 @@ The development of this project will be executed iteratively, progressing throug
 4. **`IndexStoreManager` Enhancements:**
    - Addition of methods to the `IndexStoreManager` class to perform `INSERT OR REPLACE` operations into the `__lmd_blocks` table. These methods will handle the binding of serialized `NodeBlock` data and associated metadata (version, epoch, tombstone status, checksum) to prepared statements.
    - Addition of methods for querying the `__lmd_blocks` table by `block_id`, enabling the retrieval of the latest shadow version of a given block.
-5. **`ReadNodeBlock` Enhancements (V1 Specification):**
+5. **`ReadNodeBlock` Enhancements (beta1 Specification):**
    - Implementation of an updated lookup hierarchy for retrieving `NodeBlock`s: the function will first check the In-Memory LRU Cache, then query the `__lmd_blocks` table (via `IndexStoreManager`), and finally, if not found in either, read from the `graph.lmd` file.
    - Incorporation of basic MVCC logic: The function will compare the `NodeBlock::commit_epoch` (retrieved from the block data) with a query's snapshot epoch. For this MVP, the concept and provision of a query's snapshot epoch may also be simplified (e.g., using the current provisional epoch counter).
-6. **Insertion Logic (`LmDiskannIndex::Insert` - V1 Specification):**
+6. **Insertion Logic (`LmDiskannIndex::Insert` - beta1 Specification):**
    - The processing of new vectors (and their corresponding nodes) will entail the following sequence:
      - Creation of a new `NodeBlock` instance within the LRU cache; this block is immediately marked as dirty.
      - Performance of a neighbor search for the new vector, utilizing the updated `ReadNodeBlock` function (which now incorporates cache and shadow lookups).
@@ -127,7 +127,7 @@ The development of this project will be executed iteratively, progressing throug
 - Enhancement of Task III.4 (`IndexStoreManager`) to include methods for interacting with the `__lmd_blocks` table (insertion and querying).
 - Development of Task IV.1 (`Insert` logic for MVP 1), focusing on new node creation, updates to neighbor `NodeBlock`s (copy-on-write), and correct interaction with the LRU cache and Ring Buffer.
 - Enhancement of the `ReadNodeBlock` function to implement the three-tiered lookup hierarchy (cache -> `__lmd_blocks` -> `graph.lmd`) and to perform basic epoch/version-based visibility checks.
-- Enhancement of the `PerformSearch` function to utilize the V1 `ReadNodeBlock`, thereby enabling searches to see recently inserted (but potentially unmerged) data.
+- Enhancement of the `PerformSearch` function to utilize the beta1 `ReadNodeBlock`, thereby enabling searches to see recently inserted (but potentially unmerged) data.
 - Implementation of the `index_version` and `block_version` (or `commit_epoch`) mechanisms for rudimentary snapshot isolation, including their storage and checking logic.
 
 **Testing Focus:**
@@ -152,21 +152,21 @@ The development of this project will be executed iteratively, progressing throug
    - Following the successful sync of `graph.lmd`, the merge process will atomically (within a single transaction on `diskann_store.duckdb`):
      - Clear the successfully merged entries from the `__lmd_blocks` table.
      - Update relevant `index_metadata` entries, such as incrementing a `merge_sequence_number` to track merge progress and consistency.
-2. **Deletion Logic (`LmDiskannIndex::Delete` - V1 Specification):**
+2. **Deletion Logic (`LmDiskannIndex::Delete` - beta1 Specification):**
    - Implementation of procedures for the creation and management of the `tombstoned_nodes` table within `diskann_store.duckdb`, as specified in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.2. This table will store `node_id`s of logically deleted nodes and their `deletion_epoch`.
    - When a `row_id` is targeted for deletion from the base table:
      - Its corresponding `node_id` will be retrieved from `lmd_lookup` and subsequently added to the `tombstoned_nodes` table.
      - The entry for this `row_id` in the `lmd_lookup` table will be deleted. Both this deletion and the insertion into `tombstoned_nodes` must occur transactionally.
      - The `NodeBlock` associated with the deleted `node_id`, if fetched from cache or storage (e.g., for updating its neighbors), can be explicitly marked with its internal `tombstone` flag set to true and assigned an appropriate `commit_epoch`. This modified `NodeBlock` (now a tombstone version) is then pushed to `__lmd_blocks` via the ring buffer, ensuring the tombstone status is persisted.
      - Neighbor `NodeBlock`s whose adjacency lists previously contained the now-deleted `node_id` must be updated. This involves creating new versions of these neighbor blocks (copy-on-write), removing the deleted `node_id` from their neighbor lists, marking them as dirty, and pushing them to the ring buffer for persistence.
-3. **`ReadNodeBlock` Enhancements (V2 Specification):**
+3. **`ReadNodeBlock` Enhancements (beta2 Specification):**
    - The `ReadNodeBlock` function will be enhanced to explicitly check the `tombstone` flag contained within the deserialized `NodeBlock` data structure.
    - Furthermore, it will consult the `tombstoned_nodes` table (via the `IndexStoreManager`). This check is particularly important if a block is read from `graph.lmd` (as this version might predate the logical deletion) or if its own `tombstone` flag is not definitive (e.g., if the block version in `graph.lmd` is older than the `deletion_epoch` in `tombstoned_nodes`). This can also serve as a primary check for deleted status before fully deserializing a block.
-4. **Search Logic Enhancements (`PerformSearch` - V1 Specification):**
+4. **Search Logic Enhancements (`PerformSearch` - beta1 Specification):**
    - The core search algorithm (`PerformSearch`) will be modified to correctly interpret the results from the enhanced `ReadNodeBlock` function. Specifically, it will skip or ignore any nodes that are identified as tombstones, ensuring they are not considered as candidates or used for further graph traversal.
-5. **Basic Vacuum Operation (`LmDiskannIndex::Vacuum` - V1 Specification):**
+5. **Basic Vacuum Operation (`LmDiskannIndex::Vacuum` - beta1 Specification):**
    - The `VACUUM INDEX` command (or an equivalent internal maintenance trigger) will, as a primary action, initiate a merge operation if the `__lmd_blocks` table has grown to a significant size or contains a substantial number of unmerged changes.
-   - It will implement the "Simpler Compaction Strategy for V1," as detailed in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.2. For MVP 2, this strategy primarily involves:
+   - It will implement the "Simpler Compaction Strategy for beta1," as detailed in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.2. For MVP 2, this strategy primarily involves:
      - Focusing on rudimentary free list management for `graph.lmd` slots. The merge process, when it encounters `NodeBlock`s from `__lmd_blocks` that correspond to `node_id`s already marked in `tombstoned_nodes`, will identify these slots in `graph.lmd` as free. This free list information will be persisted in `index_metadata`. Subsequent new node insertions (which are integrated into `graph.lmd` via the merge process) will then attempt to reuse these freed slots before appending to the end of the file.
      - Implementing tail trimming of `graph.lmd`: if a contiguous range of blocks at the physical end of the `graph.lmd` file are all identified as free or tombstoned, the file can be truncated to reclaim this trailing space.
 
@@ -206,7 +206,7 @@ The development of this project will be executed iteratively, progressing throug
    - Implement a runtime warning mechanism, potentially using `duckdb::ClientContext::Warn`, that is triggered if a filtered search operation (i.e., one with an active `allowed_ids` set) exhausts its `L_search` budget but the Results Heap (RH) contains fewer than the requested `K` qualified candidates. This feedback mechanism is proposed in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.1, under "Exploration Budget (`L_search` / `ef_search`)."
 4. **Basic Cost Model for Optimizer Integration:**
    - Implement the `LmDiskannIndex::ConstructCost` method (or an equivalent API provided by DuckDB for index cost estimation). This method will provide the query optimizer with an estimated cost for performing a scan using this index.
-   - The V1 Cost Model will be based on parameters such as `L_search_effective` (an estimate of unique nodes visited), `R_avg` (average effective graph degree), and a `Penalty_factor_selectivity`. This penalty factor will be applied when an `allowed_ids` set is active to account for the potentially increased search effort in sparse subgraphs, as outlined in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.4.
+   - The beta1 Cost Model will be based on parameters such as `L_search_effective` (an estimate of unique nodes visited), `R_avg` (average effective graph degree), and a `Penalty_factor_selectivity`. This penalty factor will be applied when an `allowed_ids` set is active to account for the potentially increased search effort in sparse subgraphs, as outlined in "2025-05-06 04-Diskann algorithm mitigations.md," Section 3.4.
 
 **Implementation Tasks:**
 

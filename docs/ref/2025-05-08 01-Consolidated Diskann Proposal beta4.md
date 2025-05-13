@@ -2,13 +2,13 @@ Understood. I’ll consolidate all the design documents, LM-DiskANN paper, and y
 
 I'll let you know as soon as the full document is ready for your review.
 
-# LM-DiskANN Extension: Architecture and Design Evolution
+# LM-DiskANN Extension: Architecture and Design Evolution beta4
 
 ## Background and Evolution from LM-DiskANN Paper to DuckDB Extension
 
 **LM-DiskANN Overview:** *LM-DiskANN* (Low-Memory DiskANN) is a dynamic graph-based Approximate Nearest Neighbor (ANN) index designed to reside primarily on disk while using minimal RAM. It builds on the DiskANN approach, which stores a navigable small-world graph of vectors for high recall and performance, but eliminates DiskANN’s need to keep a compressed copy of all vectors in memory. In LM-DiskANN, each graph node’s disk *block* contains *complete routing information* – the node’s vector and a list of neighbors (with compressed neighbor vectors) – enabling searches with only on-demand disk reads and negligible memory overhead. The original paper demonstrated that this design achieves recall-latency performance comparable to in-memory indexes while drastically reducing memory footprint.
 
-**From Paper to DuckDB Integration:** The academic prototype of LM-DiskANN provided the core idea of disk-resident graph indexing with dynamic updates. However, integrating this into DuckDB as an index extension required significant architectural evolution. The extension must handle **transactional updates, concurrency, and recovery** in a DBMS context – areas beyond the paper’s scope. Initial integration attempts (using DuckDB’s in-memory allocators) revealed issues like **memory-pinning and poor eviction**, prompting a redesign to a *“shadow table” architecture* that fully embraces disk storage and DuckDB’s WAL/transaction mechanisms. Over successive design iterations (v1 and v2), the architecture evolved to ensure **ACID properties**, minimal write amplification, and synergy with DuckDB’s optimizer for filtered queries. The final design, described below, marries the LM-DiskANN graph structure with DuckDB’s MVCC model and storage framework, resulting in a robust, modular extension that supports billion-scale vector data with dynamic inserts/deletes.
+**From Paper to DuckDB Integration:** The academic prototype of LM-DiskANN provided the core idea of disk-resident graph indexing with dynamic updates. However, integrating this into DuckDB as an index extension required significant architectural evolution. The extension must handle **transactional updates, concurrency, and recovery** in a DBMS context – areas beyond the paper’s scope. Initial integration attempts (using DuckDB’s in-memory allocators) revealed issues like **memory-pinning and poor eviction**, prompting a redesign to a *“shadow table” architecture* that fully embraces disk storage and DuckDB’s WAL/transaction mechanisms. Over successive design iterations, the architecture evolved to ensure **ACID properties**, minimal write amplification, and synergy with DuckDB’s optimizer for filtered queries. The final design, described below, marries the LM-DiskANN graph structure with DuckDB’s MVCC model and storage framework, resulting in a robust, modular extension that supports billion-scale vector data with dynamic inserts/deletes.
 
 ## Architectural Overview
 
@@ -399,7 +399,7 @@ MVP 1 was tested by inserting vectors and immediately querying them (to verify t
 - **Tombstone Support:** Added the `tombstoned_nodes` table and deletion logic in `Delete`:
   - On delete, add node_id to tombstone table, remove mapping, mark NodeBlock.tombstone and update neighbors to remove links.
   - Flush these as with inserts. We treated a tombstone like a special update.
-- **Read Logic V2:** `ReadNodeBlock` now checks if a block is tombstoned (flag or in tombstone table) and if so, treats it as non-existent for active transactions. We also cross-check tombstone table when reading from base file: if a NodeBlock from `graph.lmd` is older and might not have tombstone flag, we consult `tombstoned_nodes` to decide visibility.
+- **Read Logic beta2:** `ReadNodeBlock` now checks if a block is tombstoned (flag or in tombstone table) and if so, treats it as non-existent for active transactions. We also cross-check tombstone table when reading from base file: if a NodeBlock from `graph.lmd` is older and might not have tombstone flag, we consult `tombstoned_nodes` to decide visibility.
 - **Search Skip Tombstones:** Updated `PerformSearch` to skip over tombstoned nodes entirely (do not add them to result or exploration).
 - **Vacuum Command:** Implemented a `VacuumIndex()` method that the SQL `VACUUM INDEX myindex` calls. This triggers a merge and applies free list cleanup. In MVP 2, the free list handling was introduced:
   - Mark freed slots in metadata when a tombstone is merged (so that slot can be reused).

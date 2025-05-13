@@ -3,7 +3,7 @@ Great. I’ll analyze how the Highway and SimSIMD libraries can improve your LM-
 I'll get back to you shortly with a breakdown of primitives, performance tradeoffs, code references, and integration advice.
 
 
-# Leveraging Highway and SimSIMD for LM‑DiskANN’s SIMD Kernels
+# Leveraging Highway and SimSIMD for LM‑DiskANN’s SIMD Kernels beta4
 
 ## Background: Ternary Quantization and Current Implementation
 

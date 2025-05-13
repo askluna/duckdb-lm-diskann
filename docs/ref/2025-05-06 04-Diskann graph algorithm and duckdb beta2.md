@@ -11,7 +11,7 @@ I’ll synthesize all prior documents, critical reviews, and the LM-DiskANN pape
 I’ll let you know as soon as it’s ready.
 
 
-# Technical Specification: LM-DiskANN Graph Index Integration with DuckDB
+# Technical Specification: LM-DiskANN Graph Index Integration with DuckDB beta2
 
 ## Overview and Node Storage Layout
 
